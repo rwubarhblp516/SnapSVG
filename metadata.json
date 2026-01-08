@@ -1,0 +1,5 @@
+{
+  "name": "SnapSVG",
+  "description": "基于 WebAssembly 的本地图片转 SVG 矢量图工具。隐私安全，支持实时预览与路径编辑。",
+  "requestFramePermissions": []
+}
