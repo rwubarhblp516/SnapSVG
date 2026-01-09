@@ -5,9 +5,12 @@ export interface TracerParams {
   corners: number; // 0-100 (High = sharp, Low = round)
   noise: number; // 0-100 (px area to ignore)
   blur: number; // 0-10 (Pre-processing)
-  sampling: number; // New: 1 = Original, 2 = 2x Upscale, 4 = 4x Upscale
-  ignoreWhite: boolean; // Remove white background
-  smartBackground: boolean; // Flood fill from edges to preserve internal whites
+  sampling: number; // 1 = Original, 2 = 2x Upscale, 4 = 4x Upscale
+  ignoreWhite: boolean; // Remove background (Boolean toggle)
+  smartBackground: boolean; // Flood fill from edges
+  colorMode: 'color' | 'grayscale' | 'binary'; // Rendering modes
+  autoAntiAlias: boolean; // Morphological smoothing
+  backgroundColor?: { r: number; g: number; b: number }; // Target background color
 }
 
 export interface VectorPath {
@@ -31,6 +34,6 @@ export interface ViewportState {
   y: number;
 }
 
-export type ViewMode = 'split' | 'overlay' | 'original' | 'vector';
+export type ViewMode = 'split' | 'vector' | 'isometric';
 
-export type PresetName = 'default' | 'high-fidelity' | 'low-fidelity' | '3-colors' | '6-colors' | '16-colors' | 'black-white' | 'sketch';
+export type PresetName = 'clipart' | 'photo' | 'sketch' | 'lineart' | 'poster' | 'default';
