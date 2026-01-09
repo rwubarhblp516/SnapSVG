@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import { 
   Download, Upload, Image as ImageIcon, Zap, Settings2, 
-  Command, Palette, Sparkles, Wand2, Droplet, 
-  ChevronDown, ChevronUp, Check, Layers, SlidersHorizontal,
-  FileImage, Eraser, ShieldCheck, Microscope, Contrast, Aperture, Pipette, X,
-  Bot, BrainCircuit, Undo2, Redo2, Key
+  Palette, Sparkles, Wand2, 
+  ChevronDown, ChevronUp, Check, Layers,
+  FileImage, Eraser, Microscope, Contrast, Aperture, Pipette, X,
+  Bot, Undo2, Redo2, Wand, Info
 } from 'lucide-react';
 import { Slider } from './Slider';
-import { TracerParams, PresetName } from '../types';
+import { TracerParams, PresetName, PaletteItem } from '../types';
 
 interface SidebarProps {
   params: TracerParams;
@@ -26,7 +26,9 @@ interface SidebarProps {
   onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
-  // API Key Props
+  // Palette
+  palette: PaletteItem[];
+  // API Key Props (已废弃，保留接口兼容但隐藏)
   apiKey: string;
   setApiKey: (key: string) => void;
 }
@@ -56,12 +58,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onRedo,
   canUndo,
   canRedo,
-  apiKey,
-  setApiKey
+  palette
 }) => {
   const [selectedPreset, setSelectedPreset] = useState<PresetName>('default');
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showApiKey, setShowApiKey] = useState(false);
 
   const applyPreset = (key: PresetName) => {
       setSelectedPreset(key);
@@ -108,26 +108,56 @@ export const Sidebar: React.FC<SidebarProps> = ({
       >
         选择文件
       </button>
-
-      {/* API Key Input in Empty State too, so users can set it before starting */}
-      <div className="w-full pt-8 border-t border-slate-800/50">
-           <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-                <Key className="w-3 h-3" />
-                Gemini API Key
-           </div>
-           <input 
-                type="password" 
-                placeholder="在此粘贴 Google API Key..."
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                className="w-full bg-slate-800/50 text-slate-300 text-xs px-3 py-2 rounded-lg border border-slate-700 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none placeholder:text-slate-600"
-            />
-            <p className="text-[9px] text-slate-600 mt-2 text-left">
-                用于 "AI 智能拆分" 功能。Key 将仅保存在您的浏览器中。
-            </p>
-      </div>
     </div>
   );
+
+  const renderPalette = () => {
+    if (!palette || palette.length === 0) return null;
+    
+    // Sort logic already handled in mockVTracer, but ensure consistency
+    // We display up to 32 colors visually to avoid clutter, though calculation might have more
+    const displayPalette = palette.slice(0, 48);
+
+    return (
+        <div className="mt-4 bg-slate-900/40 rounded-lg p-3 border border-slate-800">
+             <div className="flex items-center justify-between mb-2">
+                 <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">检测到的色板 (Palette)</span>
+                 <span className="text-[10px] text-slate-600 font-mono">{palette.length} Colors</span>
+             </div>
+             <div className="flex flex-wrap gap-1.5">
+                 {displayPalette.map((p, idx) => {
+                     // Calculate size based on ratio (dominance)
+                     // Base size 12px, max additional 12px
+                     // Use log scale so small percentages are still visible
+                     const size = Math.max(12, Math.min(24, 12 + (Math.log10(p.ratio * 100 + 1) * 8)));
+                     
+                     return (
+                         <div 
+                            key={`${p.hex}-${idx}`}
+                            className="rounded-full shadow-sm border border-white/10 relative group hover:z-10 hover:scale-125 transition-transform cursor-help"
+                            style={{ 
+                                backgroundColor: p.hex,
+                                width: `${size}px`,
+                                height: `${size}px`
+                            }}
+                         >
+                            {/* Tooltip */}
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-black/90 text-white text-[10px] rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 font-mono border border-white/10">
+                                {p.hex.toUpperCase()} <br/>
+                                {(p.ratio * 100).toFixed(1)}%
+                            </div>
+                         </div>
+                     );
+                 })}
+             </div>
+             {params.colors > 48 && (
+                 <div className="mt-2 text-[9px] text-center text-slate-600 italic">
+                     ...及更多微小色块 (噪音)
+                 </div>
+             )}
+        </div>
+    );
+  };
 
   const renderControls = () => (
     <div className="flex flex-col h-full">
@@ -173,24 +203,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </button>
             </div>
 
-            {/* AI Split Button */}
+            {/* Smart Auto Tune Button (Replaces AI) */}
             <button 
                 onClick={onAiSplit}
-                disabled={aiProcessing}
-                className="w-full py-2.5 bg-gradient-to-r from-emerald-600/20 to-teal-600/20 hover:from-emerald-600/30 hover:to-teal-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl flex items-center justify-center gap-2 text-xs font-semibold transition-all group relative overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full py-2.5 bg-gradient-to-r from-emerald-600/20 to-teal-600/20 hover:from-emerald-600/30 hover:to-teal-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl flex items-center justify-center gap-2 text-xs font-semibold transition-all group relative overflow-hidden active:scale-[0.98]"
             >
-                {aiProcessing ? (
-                   <>
-                      <div className="w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin"></div>
-                      <span>Gemini 思考中...</span>
-                   </>
-                ) : (
-                   <>
-                      <BrainCircuit className="w-4 h-4 group-hover:animate-pulse" />
-                      <span>Gemini 智能拆分 (AI Split)</span>
-                      <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                   </>
-                )}
+                <Wand className="w-4 h-4 group-hover:rotate-12 transition-transform" />
+                <span> 推荐设置 (Recommended)</span>
+                <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
             </button>
         </div>
 
@@ -272,7 +292,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 )}
             </div>
 
-            {/* Colors Slider */}
+            {/* Colors Slider & Palette */}
             <div className={`space-y-3 transition-opacity ${params.colorMode === 'binary' ? 'opacity-40 pointer-events-none' : ''}`}>
                  <div className="flex justify-between items-end">
                     <label className="text-sm font-medium text-slate-200 flex items-center gap-2">
@@ -287,6 +307,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onChange={(e) => updateParam('colors', Number(e.target.value))}
                     className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500 hover:accent-purple-400"
                 />
+                
+                {/* Visual Palette */}
+                {renderPalette()}
             </div>
 
             {/* Sampling (Upscale) */}
@@ -384,30 +407,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     />
                 </div>
             )}
-
-            {/* API Key Settings (Advanced/Bottom) */}
-            <div className="pt-4 border-t border-slate-800/50">
-                 <button 
-                    onClick={() => setShowApiKey(!showApiKey)}
-                    className="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase tracking-widest hover:text-slate-300 transition-colors"
-                 >
-                    <Settings2 className="w-3 h-3" />
-                    <span>系统设置</span>
-                 </button>
-                 
-                 {showApiKey && (
-                    <div className="mt-3 animate-in fade-in slide-in-from-top-1">
-                        <label className="text-[10px] text-slate-400 mb-1 block">Gemini API Key</label>
-                        <input 
-                            type="password" 
-                            placeholder="sk-..."
-                            value={apiKey}
-                            onChange={(e) => setApiKey(e.target.value)}
-                            className="w-full bg-slate-900/50 text-slate-300 text-xs px-2 py-1.5 rounded border border-slate-700 focus:border-purple-500 outline-none"
-                        />
-                    </div>
-                 )}
-            </div>
         </div>
 
         {/* Footer Actions */}
@@ -441,17 +440,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   );
 
   return (
-    <div className="w-80 bg-[#0f172a]/90 backdrop-blur-xl border-r border-slate-800 flex flex-col z-30 h-full shrink-0 transition-all duration-300">
-        {/* Header Logo */}
-        <div className="h-14 flex items-center px-5 border-b border-slate-800 shrink-0 bg-slate-900/50">
-            <div className="flex items-center gap-2 font-bold text-lg tracking-tight bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">
-                <Zap className="w-5 h-5 text-purple-400 fill-purple-400/20" />
-                SnapSVG
-            </div>
-            <div className="ml-auto text-[10px] font-mono text-slate-600 bg-slate-800/50 px-1.5 py-0.5 rounded">v11.2</div>
+    <div className="w-80 h-full bg-slate-900 border-r border-slate-800 flex flex-col shrink-0 relative z-30">
+        <div className="p-6 border-b border-slate-800 shrink-0 bg-slate-900 z-20">
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent flex items-center gap-2">
+                <Zap className="w-6 h-6 text-purple-400" />
+                Vector.AI
+            </h1>
+            <p className="text-xs text-slate-500 mt-1 font-mono tracking-tight">SVG TRACER & CONVERTER</p>
         </div>
-        
-        {hasImage ? renderControls() : renderEmptyState()}
+
+        <div className="flex-1 overflow-hidden relative">
+            {!hasImage ? renderEmptyState() : renderControls()}
+        </div>
     </div>
   );
 };

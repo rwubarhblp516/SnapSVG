@@ -23,6 +23,21 @@ export interface VectorPath {
   y: number;
 }
 
+export interface PaletteItem {
+  hex: string;
+  r: number;
+  g: number;
+  b: number;
+  count: number;
+  ratio: number; // 0 to 1 (percentage of image)
+}
+
+export interface TracerResult {
+  paths: VectorPath[];
+  svgString: string;
+  palette: PaletteItem[];
+}
+
 export interface ProcessingStats {
   durationMs: number;
   pathCount: number;

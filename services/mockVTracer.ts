@@ -1,33 +1,36 @@
-import { TracerParams, VectorPath } from '../types';
+import { TracerParams, VectorPath, PaletteItem, TracerResult } from '../types';
 
 /**
- * ADVANCED VECTOR TRACER v11.2 (Subdivision & High-Density Smoothing)
+ * ADVANCED VECTOR TRACER v13.3 (Smart Auto v2 - High Fidelity)
  */
 
 interface Point { x: number; y: number; }
 interface Rgba { r: number; g: number; b: number; a: number; }
 
-// --- Helpers ---
+// --- CACHE STATE (Module Level) ---
+let _currentImgRef: ImageData | null = null;
+const _scaledImageCache = new Map<number, ImageData>();
 
+interface KMeansCache {
+    hash: string;
+    labels: Uint8Array;
+    centroids: Rgba[];
+}
+let _kMeansCache: KMeansCache | null = null;
+
+// --- Helpers ---
 const rgbToHex = (r: number, g: number, b: number) => {
   return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
 };
-
 const yieldToMain = () => new Promise(resolve => setTimeout(resolve, 0));
-
 const getPixelDiff = (c1: Rgba, c2: Rgba) => {
     return Math.pow(c1.r - c2.r, 2) + Math.pow(c1.g - c2.g, 2) + Math.pow(c1.b - c2.b, 2);
 };
-
-// Check if color is close to target background color
 const isBackgroundPixel = (c: Rgba, target: Rgba | undefined) => {
-    if (!target) return c.r > 245 && c.g > 245 && c.b > 245; // Default white
-    // Euclidean distance threshold approx 20-30
+    if (!target) return c.r > 245 && c.g > 245 && c.b > 245; 
     const dist = Math.sqrt(Math.pow(c.r - target.r, 2) + Math.pow(c.g - target.g, 2) + Math.pow(c.b - target.b, 2));
     return dist < 30; 
 };
-
-// Detect dominant color on image perimeter
 const detectDominantColor = (data: Uint8ClampedArray, width: number, height: number): Rgba => {
     const counts = new Map<string, number>();
     const check = (i: number) => {
@@ -36,29 +39,15 @@ const detectDominantColor = (data: Uint8ClampedArray, width: number, height: num
         const key = `${r},${g},${b}`;
         counts.set(key, (counts.get(key) || 0) + 1);
     }
-    
-    // Sample perimeter with step to save time
     const step = 2;
-    // Top/Bottom
-    for(let x=0; x<width; x+=step) {
-        check(x * 4);
-        check(((height-1)*width + x) * 4);
-    }
-    // Left/Right
-    for(let y=1; y<height-1; y+=step) {
-        check((y*width)*4);
-        check((y*width + width-1)*4);
-    }
-
+    for(let x=0; x<width; x+=step) { check(x * 4); check(((height-1)*width + x) * 4); }
+    for(let y=1; y<height-1; y+=step) { check((y*width)*4); check((y*width + width-1)*4); }
     let max = 0, maxKey = "255,255,255";
-    for(const [k, v] of counts) {
-        if(v > max) { max = v; maxKey = k; }
-    }
+    for(const [k, v] of counts) { if(v > max) { max = v; maxKey = k; } }
     const [r,g,b] = maxKey.split(',').map(Number);
     return { r, g, b, a: 255 };
 };
 
-// --- Seeded PRNG ---
 class SeededRandom {
     private seed: number;
     constructor(seed: number) { this.seed = seed; }
@@ -89,7 +78,7 @@ const scaleImageData = (imageData: ImageData, scale: number): ImageData => {
     return scaledCtx.getImageData(0, 0, newWidth, newHeight);
 };
 
-// --- Filters: Sharpen ---
+// --- Filters ---
 const applySharpen = async (data: Uint8ClampedArray, width: number, height: number, amount: number): Promise<Uint8ClampedArray> => {
     if (amount <= 0) return data;
     const output = new Uint8ClampedArray(data);
@@ -118,7 +107,6 @@ const applySharpen = async (data: Uint8ClampedArray, width: number, height: numb
     return output;
 };
 
-// --- Filters: Blur ---
 const applyBlur = async (data: Uint8ClampedArray, width: number, height: number, radius: number): Promise<Uint8ClampedArray> => {
     if (radius <= 0) return new Uint8ClampedArray(data); 
     const temp = new Uint8ClampedArray(data.length);
@@ -157,16 +145,12 @@ const applyBlur = async (data: Uint8ClampedArray, width: number, height: number,
     return target;
 };
 
-// --- Color Modes ---
 const applyColorMode = async (data: Uint8ClampedArray, width: number, height: number, mode: 'grayscale' | 'binary'): Promise<Uint8ClampedArray> => {
     const output = new Uint8ClampedArray(data);
     const len = width * height;
-    
-    // Binary Threshold Calculation
     let threshold = 128;
     if (mode === 'binary') {
-        let sum = 0;
-        let count = 0;
+        let sum = 0; let count = 0;
         for (let i = 0; i < len; i += 10) { 
             const idx = i * 4;
             sum += data[idx] * 0.299 + data[idx+1] * 0.587 + data[idx+2] * 0.114;
@@ -174,36 +158,24 @@ const applyColorMode = async (data: Uint8ClampedArray, width: number, height: nu
         }
         threshold = sum / count;
     }
-
     for (let i = 0; i < len; i++) {
         if (i % 20000 === 0) await yieldToMain();
         const idx = i * 4;
-        const r = data[idx];
-        const g = data[idx + 1];
-        const b = data[idx + 2];
-        const a = data[idx + 3];
-
+        const r = data[idx]; const g = data[idx + 1]; const b = data[idx + 2]; const a = data[idx + 3];
         if (a < 128) continue;
         const gray = r * 0.299 + g * 0.587 + b * 0.114;
-
         if (mode === 'grayscale') {
-            output[idx] = gray;
-            output[idx + 1] = gray;
-            output[idx + 2] = gray;
+            output[idx] = gray; output[idx + 1] = gray; output[idx + 2] = gray;
         } else if (mode === 'binary') {
             const val = gray > threshold ? 255 : 0;
-            output[idx] = val;
-            output[idx + 1] = val;
-            output[idx + 2] = val;
+            output[idx] = val; output[idx + 1] = val; output[idx + 2] = val;
         }
     }
     return output;
 };
 
-// --- Morphological Anti-Aliasing ---
 const applyMajorityFilter = async (labels: Uint8Array, width: number, height: number, iterations: number = 2): Promise<Uint8Array> => {
     let currentLabels = new Uint8Array(labels);
-    
     for(let i=0; i<iterations; i++) {
         const nextLabels = new Uint8Array(currentLabels);
         for (let y = 1; y < height - 1; y++) {
@@ -212,9 +184,7 @@ const applyMajorityFilter = async (labels: Uint8Array, width: number, height: nu
                 const idx = y * width + x;
                 const current = currentLabels[idx];
                 const counts: Record<number, number> = {};
-                let maxCount = 0;
-                let maxLabel = current;
-                
+                let maxCount = 0; let maxLabel = current;
                 for (let dy = -1; dy <= 1; dy++) {
                     for (let dx = -1; dx <= 1; dx++) {
                        const nIdx = (y + dy) * width + (x + dx);
@@ -223,9 +193,7 @@ const applyMajorityFilter = async (labels: Uint8Array, width: number, height: nu
                        if (counts[val] > maxCount) { maxCount = counts[val]; maxLabel = val; }
                     }
                 }
-                if (maxLabel !== current && maxCount >= 5) {
-                    nextLabels[idx] = maxLabel;
-                }
+                if (maxLabel !== current && maxCount >= 5) { nextLabels[idx] = maxLabel; }
             }
         }
         currentLabels = nextLabels;
@@ -233,37 +201,103 @@ const applyMajorityFilter = async (labels: Uint8Array, width: number, height: nu
     return currentLabels;
 };
 
-// --- Color Estimation ---
+// --- IMPROVED: Estimate Colors ---
 export const estimateColors = (data: Uint8ClampedArray, pixelCount: number): number => {
-    const sampleSize = 5000;
+    // Optimization: Sample every Nth pixel to avoid freezing on big images
+    const sampleSize = 10000;
     const step = Math.max(1, Math.floor(pixelCount / sampleSize));
     const colorCounts = new Map<string, number>();
     let validSamples = 0;
-    const QUANTIZE = 16; 
+    
+    // Less aggressive quantization (8 instead of 16) to detect subtle variations
+    const QUANTIZE = 8; 
 
     for (let i = 0; i < pixelCount; i += step) {
         const idx = i * 4;
         if (data[idx + 3] < 128) continue;
+        
         const r = Math.round(data[idx] / QUANTIZE) * QUANTIZE;
         const g = Math.round(data[idx + 1] / QUANTIZE) * QUANTIZE;
         const b = Math.round(data[idx + 2] / QUANTIZE) * QUANTIZE;
+        
         const key = `${r},${g},${b}`;
         colorCounts.set(key, (colorCounts.get(key) || 0) + 1);
         validSamples++;
     }
+
     if (validSamples === 0) return 2;
-    const threshold = validSamples * 0.005; 
+
+    // Filter out very rare noise colors (less than 0.2%)
+    const threshold = validSamples * 0.002; 
     let distinctColors = 0;
     for (const count of colorCounts.values()) {
         if (count > threshold) distinctColors++;
     }
+    
+    // If the image is very colorful, just assume max to avoid posterization
+    if (distinctColors > 64) return 64;
     return Math.max(4, Math.min(distinctColors, 64)); 
 };
 
-// --- K-Means ---
+// --- UPDATED: Smarter Local Auto-Config ---
+export const autoDetectParams = (imageData: ImageData): Partial<TracerParams> => {
+    const { width, height, data } = imageData;
+    const pixelCount = width * height;
+    
+    // 1. Analyze Complexity
+    const estimatedColors = estimateColors(data, pixelCount);
+    
+    // 2. Analyze Size
+    // Relaxed "Large" definition. 
+    // 1920x1080 = ~2MP. We can handle 2x upscale on this easily (8MP result).
+    const isSmallIcon = width < 512 && height < 512;
+    const isHuge = pixelCount > 3000000; // Only downgrade if > 3MP (e.g. 2000x1500)
+
+    // 3. Heuristic Rules (Prioritize Quality)
+    let params: Partial<TracerParams> = {
+        colors: estimatedColors,
+        blur: 0,
+        noise: 2, 
+        corners: 60,
+        paths: 80, // Default to high fidelity fitting
+        sampling: 2, // Default to 2x for best results
+        colorMode: 'color'
+    };
+
+    if (isSmallIcon) {
+        // Icons need max sharpness
+        params.sampling = 4;
+        params.paths = 90; 
+        params.noise = 0; 
+        params.blur = 0;
+        params.corners = 80;
+    } else if (isHuge) {
+        // Only downgrade sampling for massive images to prevent OOM
+        params.sampling = 1;
+        params.noise = 5; // Help denoise big photos
+    }
+
+    // Complexity Logic
+    if (estimatedColors < 8) {
+        // Likely a Logo / Clipart -> Sharper
+        params.corners = 90; 
+        params.blur = 0;
+    } else if (estimatedColors >= 32) {
+        // Likely a Photo -> Needs denoising and smoothing
+        params.corners = 50; // Not too round, but not sharp
+        params.colors = 64; // Max out colors to prevent bands
+        params.noise = 5; // Eat small pixel noise
+        params.blur = 1; // Slight blur to kill compression artifacts
+    }
+
+    console.log("Auto-Detected Params (v2):", params);
+    return params;
+};
+
+// --- K-Means & Processing ---
 const runKMeans = async (data: Uint8ClampedArray, pixelCount: number, k: number): Promise<Uint8Array> => {
     const rng = new SeededRandom(12345);
-    const sampleSize = 4000;
+    const sampleSize = pixelCount > 1000000 ? 2000 : 4000;
     const step = Math.max(1, Math.floor(pixelCount / sampleSize));
     const samples: Rgba[] = [];
     
@@ -363,7 +397,6 @@ const runKMeans = async (data: Uint8ClampedArray, pixelCount: number, k: number)
     return labels;
 };
 
-// --- Denoise ---
 const denoiseLabels = (labels: Uint8Array, width: number, height: number, strength: number): Uint8Array => {
     if (strength === 0) return labels; 
     const newLabels = new Uint8Array(labels);
@@ -387,16 +420,13 @@ const denoiseLabels = (labels: Uint8Array, width: number, height: number, streng
     return newLabels;
 };
 
-// --- Background Logic ---
 const markBackground = (labels: Uint8Array, width: number, height: number, bgLabelIds: number[]): void => {
     const queue: number[] = [];
     const visited = new Uint8Array(width * height); 
     const SKIP_LABEL = 255;
     const bgSet = new Set(bgLabelIds);
-
     for (let x = 0; x < width; x++) { queue.push(x); queue.push((height - 1) * width + x); }
     for (let y = 1; y < height - 1; y++) { queue.push(y * width); queue.push(y * width + (width - 1)); }
-
     let head = 0;
     while(head < queue.length) {
         const idx = queue[head++];
@@ -413,7 +443,6 @@ const markBackground = (labels: Uint8Array, width: number, height: number, bgLab
     }
 };
 
-// --- Marching Squares & Smoothing ---
 const MS_LOOKUP = [[], [[0, 0.5], [0.5, 1]], [[0.5, 1], [1, 0.5]], [[0, 0.5], [1, 0.5]],[[0.5, 0], [1, 0.5]], [[0, 0.5], [0.5, 0], [1, 0.5], [0.5, 1]], [[0.5, 0], [0.5, 1]], [[0, 0.5], [0.5, 0]],[[0, 0.5], [0.5, 0]], [[0.5, 0], [0.5, 1]], [[0.5, 0], [1, 0.5], [0.5, 1], [0, 0.5]], [[0.5, 0], [1, 0.5]],[[0, 0.5], [1, 0.5]], [[1, 0.5], [0.5, 1]], [[0, 0.5], [0.5, 1]], []];
 const calculatePolygonArea = (points: Point[]): number => {
     let area = 0;
@@ -458,30 +487,26 @@ const traceLayer = (labels: Uint8Array, width: number, height: number, targetLab
     return loops;
 };
 
-// --- KEY FIX: Iterative Coordinate Smoothing ---
-// Physically moves points closer to their neighbors to remove pixel-stair artifacts
-const smoothPoints = (points: Point[], iterations: number): Point[] => {
+const smoothPoints = (points: Point[], iterations: number, weight: number = 0.5): Point[] => {
     if (iterations <= 0 || points.length < 3) return points;
     let curr = [...points];
+    const len = curr.length;
     for(let iter=0; iter<iterations; iter++) {
-        const next = [];
-        const len = curr.length;
+        const next = new Array(len);
         for(let i=0; i<len; i++) {
             const prevP = curr[(i - 1 + len) % len];
             const currP = curr[i];
             const nextP = curr[(i + 1) % len];
-            // Simple box blur on coordinates (Moving Average)
-            next.push({
-                x: (prevP.x + currP.x + nextP.x) / 3,
-                y: (prevP.y + currP.y + nextP.y) / 3
-            });
+            next[i] = {
+                x: (prevP.x + currP.x * weight + nextP.x) / (2 + weight),
+                y: (prevP.y + currP.y * weight + nextP.y) / (2 + weight)
+            };
         }
         curr = next;
     }
     return curr;
 };
 
-// --- NEW HELPER: Subdivide Points (Increase Density) ---
 const subdividePoints = (points: Point[]): Point[] => {
     const newPoints: Point[] = [];
     const len = points.length;
@@ -489,25 +514,35 @@ const subdividePoints = (points: Point[]): Point[] => {
         const p1 = points[i];
         const p2 = points[(i + 1) % len];
         newPoints.push(p1);
-        // Add midpoint
-        newPoints.push({
-            x: (p1.x + p2.x) / 2,
-            y: (p1.y + p2.y) / 2
-        });
+        newPoints.push({ x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 });
     }
     return newPoints;
 };
 
+const removeStaircases = (points: Point[]): Point[] => {
+    const len = points.length;
+    if (len < 4) return points;
+    const result: Point[] = [];
+    result.push(points[0]);
+    for (let i = 1; i < len; i++) {
+        const prev = result[result.length - 1]; const curr = points[i]; const next = points[(i + 1) % len];
+        const d1 = (curr.x - prev.x)**2 + (curr.y - prev.y)**2;
+        const d2 = (next.x - curr.x)**2 + (next.y - curr.y)**2;
+        if (d1 < 2.5 && d2 < 2.5) { continue; }
+        result.push(curr);
+    }
+    if (result.length < 3) return points;
+    return result;
+};
 
-// UPGRADED SMOOTHING ALGORITHM: Cubic Splines with Corner Detection
 const smoothPath = (points: Point[], pathsParam: number, cornersParam: number, scaleFactor: number): string => {
     if (points.length < 3) return "";
-
-    // 1. Pre-simplification (Ramer-Douglas-Peucker)
-    // Decreased epsilon to retain more detail initially (was 5.0)
+    let processed = [...points];
+    processed = removeStaircases(processed);
+    const preSmoothIterations = pathsParam < 60 ? 2 : 1;
+    processed = smoothPoints(processed, preSmoothIterations, 0.5); 
     const baseEpsilon = 2.0 * (1 - pathsParam / 100);
     const epsilon = Math.max(0.1, baseEpsilon);
-    
     const sqDist = (p: Point, a: Point, b: Point) => {
         let x = a.x, y = a.y; const dx = b.x - x, dy = b.y - y;
         if (dx !== 0 || dy !== 0) { const t = ((p.x - x) * dx + (p.y - y) * dy) / (dx * dx + dy * dy); if (t > 1) { x = b.x; y = b.y; } else if (t > 0) { x += dx * t; y += dy * t; } }
@@ -520,169 +555,144 @@ const smoothPath = (points: Point[], pathsParam: number, cornersParam: number, s
         if (maxSqDist > eps * eps) { const left = simplifyDP(pts.slice(0, index + 1), eps); const right = simplifyDP(pts.slice(index), eps); return left.slice(0, left.length - 1).concat(right); }
         return [pts[0], pts[end]];
     };
-    
-    let simplified = simplifyDP(points, epsilon);
+    let simplified = simplifyDP(processed, epsilon);
     if (simplified.length < 3) return "";
-
-    // --- NEW STEP: Subdivide (Increase Vertex Count) ---
-    // If the path fits loosely, we add more points to allow for smoother curves.
-    if (pathsParam < 90) {
+    if (pathsParam < 95) {
         simplified = subdividePoints(simplified);
-        // Maybe subdivide again for extra smoothness if desired
-        if (pathsParam < 50) {
-            simplified = subdividePoints(simplified);
-        }
+        if (pathsParam < 60) { simplified = subdividePoints(simplified); }
     }
-
-    // --- NEW STEP: Iterative Smoothing to melt pixel stairs ---
-    // Increased iterations now that we have more points from subdivision
-    const smoothIterations = Math.floor((100 - pathsParam) / 10) + Math.floor((100 - cornersParam) / 20);
-    if (smoothIterations > 0) {
-        simplified = smoothPoints(simplified, Math.min(5, smoothIterations)); 
-    }
-
-    // Helper: Increased precision to 4 decimal places to prevent 3D jitter/offset
+    const smoothIterations = Math.max(2, Math.floor((100 - pathsParam) / 10) + Math.floor((100 - cornersParam) / 20));
+    simplified = smoothPoints(simplified, smoothIterations, 1.0); 
     const coord = (val: number) => Number((val / scaleFactor).toFixed(4));
-
-    // Force Linear mode if corners are very high or paths are very strict
-    if (cornersParam > 95) {
+    if (cornersParam > 98) {
         let d = `M ${coord(simplified[0].x)} ${coord(simplified[0].y)}`;
-        for (let i = 1; i < simplified.length; i++) {
-             d += ` L ${coord(simplified[i].x)} ${coord(simplified[i].y)}`; 
-        }
+        for (let i = 1; i < simplified.length; i++) { d += ` L ${coord(simplified[i].x)} ${coord(simplified[i].y)}`; }
         d += " Z"; 
         return d;
     }
-
-    // 2. Identify Corners
-    // A point is a corner if the angle is sharp
     const isCorner = new Array(simplified.length).fill(false);
-    const cornerThresholdDeg = 180 - (cornersParam * 1.5); // 0->180, 100->30
+    const cornerThresholdDeg = 180 - (cornersParam * 1.5); 
     const cornerThresholdRad = (cornerThresholdDeg * Math.PI) / 180;
-
     for(let i=0; i<simplified.length; i++) {
         const prev = simplified[(i - 1 + simplified.length) % simplified.length];
         const curr = simplified[i];
         const next = simplified[(i + 1) % simplified.length];
-        
         const a1 = Math.atan2(curr.y - prev.y, curr.x - prev.x);
         const a2 = Math.atan2(next.y - curr.y, next.x - curr.x);
         let diff = Math.abs(a1 - a2);
         if (diff > Math.PI) diff = 2 * Math.PI - diff;
-        
-        // If the turn is sharper than threshold, it's a corner
-        if (Math.PI - diff < cornerThresholdRad) {
-            isCorner[i] = true;
-        }
+        const d1 = Math.sqrt((curr.x - prev.x)**2 + (curr.y - prev.y)**2);
+        const d2 = Math.sqrt((next.x - curr.x)**2 + (next.y - curr.y)**2);
+        const isMicro = d1 < 2.5 && d2 < 2.5; 
+        if (Math.PI - diff < cornerThresholdRad && !isMicro) { isCorner[i] = true; }
     }
-
-    // 3. Generate Cubic Bezier Splines (Catmull-Rom to Bezier)
     let d = `M ${coord(simplified[0].x)} ${coord(simplified[0].y)}`;
-    
-    // Tension: 0 = loose (Catmull-Rom), 1 = tight (Linear). 
-    // High pathsParam -> Higher tension (tighter fit)
     const tension = Math.min(0.8, Math.max(0.2, pathsParam / 150)); 
-
     for (let i = 0; i < simplified.length; i++) {
         const p0 = simplified[(i - 1 + simplified.length) % simplified.length];
         const p1 = simplified[i];
         const p2 = simplified[(i + 1) % simplified.length];
         const p3 = simplified[(i + 2) % simplified.length];
-
-        // If p1 is a corner, we stop the smooth curve coming into it (treat as line)
-        // If p2 is a corner, we stop the smooth curve going out of p1 (treat as line towards p2)
-        
-        const dist12 = Math.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2);
-        
-        // If segment is huge or tiny, or corners involved, use Line
-        if (isCorner[i] || isCorner[(i+1)%simplified.length] || dist12 < 1) {
-             d += ` L ${coord(p2.x)} ${coord(p2.y)}`;
-             continue;
-        }
-
-        // Catmull-Rom Control Points
-        // cp1 = p1 + (p2 - p0) / 6 * (1-tension)
-        // cp2 = p2 - (p3 - p1) / 6 * (1-tension)
-        
+        if (isCorner[i] || isCorner[(i+1)%simplified.length]) { d += ` L ${coord(p2.x)} ${coord(p2.y)}`; continue; }
         const f = (1 - tension) / 6.0;
-
         let cp1x = p1.x + (p2.x - p0.x) * f;
         let cp1y = p1.y + (p2.y - p0.y) * f;
-
         let cp2x = p2.x - (p3.x - p1.x) * f;
         let cp2y = p2.y - (p3.y - p1.y) * f;
-        
-        // Clamp control points to prevent loops on short segments
-        if (dist12 < 10) {
-             // Fallback to quadratic-like or linear for very short detail segments
-             cp1x = p1.x + (p2.x - p1.x) * 0.33;
-             cp1y = p1.y + (p2.y - p1.y) * 0.33;
-             cp2x = p2.x - (p2.x - p1.x) * 0.33;
-             cp2y = p2.y - (p2.y - p1.y) * 0.33;
+        const dist12 = Math.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2);
+        if (dist12 < 5) {
+             cp1x = p1.x + (p2.x - p1.x) * 0.33; cp1y = p1.y + (p2.y - p1.y) * 0.33;
+             cp2x = p2.x - (p2.x - p1.x) * 0.33; cp2y = p2.y - (p2.y - p1.y) * 0.33;
         }
-
         d += ` C ${coord(cp1x)} ${coord(cp1y)}, ${coord(cp2x)} ${coord(cp2y)}, ${coord(p2.x)} ${coord(p2.y)}`;
     }
-
     d += " Z";
     return d;
 }
 
-// --- Main Trace ---
-export const traceImage = async (originalImageData: ImageData, params: TracerParams): Promise<{ paths: VectorPath[], svgString: string }> => {
-    await yieldToMain();
-    
-    // Performance Guard: Downscale huge images for processing
-    const MAX_DIM = 1280;
-    let internalScale = 1;
-    let processingImageData = originalImageData;
+const getKMeansHash = (params: TracerParams, scale: number) => {
+    return `${scale}-${params.blur}-${params.colorMode}-${params.colors}`;
+};
 
-    // Use scale logic only if image is huge
+export const traceImage = async (originalImageData: ImageData, params: TracerParams): Promise<TracerResult> => {
+    await yieldToMain();
+    if (originalImageData !== _currentImgRef) {
+        _currentImgRef = originalImageData;
+        _scaledImageCache.clear();
+        _kMeansCache = null;
+    }
+    
+    // INCREASED SAFETY LIMIT (approx 9MP = 3000x3000)
+    // Allows 1280x1280 images to be upscaled 2x (6.5MP) without trigger
+    const MAX_DIM = 1280;
+    const SAFETY_PIXEL_LIMIT = 9000000; 
+
+    let internalScale = 1;
     if (originalImageData.width > MAX_DIM || originalImageData.height > MAX_DIM) {
          internalScale = Math.min(MAX_DIM / originalImageData.width, MAX_DIM / originalImageData.height);
-         processingImageData = scaleImageData(originalImageData, internalScale);
     }
 
-    // Apply User Sampling (Upscale) on top of (potentially) downscaled image
-    // Note: If user wants 2x, and we downscaled, we effectively process at 2 * internalScale.
-    const samplingScale = params.sampling || 1;
-    let imageData = scaleImageData(processingImageData, samplingScale);
-    
-    // Total coordinate scaling factor to map back to original space
-    const totalScaleFactor = internalScale * samplingScale;
+    let requestedScale = params.sampling || 1;
+    const currentPixels = (originalImageData.width * internalScale) * (originalImageData.height * internalScale);
+    const estimatedResultPixels = currentPixels * (requestedScale * requestedScale);
 
-    if (samplingScale > 1) {
-        const sharpenStrength = samplingScale === 2 ? 0.4 : 0.7;
-        const sharpenedData = await applySharpen(imageData.data, imageData.width, imageData.height, sharpenStrength);
-        imageData = new ImageData(sharpenedData, imageData.width, imageData.height);
+    // Only downgrade if we TRULY exceed the safe buffer (9MP)
+    if (estimatedResultPixels > SAFETY_PIXEL_LIMIT) {
+        if (requestedScale === 4) requestedScale = 2;
+        if (currentPixels * (requestedScale * requestedScale) > SAFETY_PIXEL_LIMIT) requestedScale = 1;
+    }
+
+    let imageData = _scaledImageCache.get(requestedScale);
+    if (!imageData) {
+        let processingImageData = originalImageData;
+        if (internalScale !== 1) {
+             processingImageData = scaleImageData(originalImageData, internalScale);
+        }
+        let tempImg = scaleImageData(processingImageData, requestedScale);
+        if (requestedScale > 1) {
+            const sharpenStrength = requestedScale === 2 ? 0.4 : 0.7;
+            const sharpenedData = await applySharpen(tempImg.data, tempImg.width, tempImg.height, sharpenStrength);
+            tempImg = new ImageData(sharpenedData, tempImg.width, tempImg.height);
+        }
+        imageData = tempImg;
+        _scaledImageCache.set(requestedScale, imageData);
     }
     
+    const totalScaleFactor = internalScale * requestedScale;
     const { width, height, data } = imageData;
-    const paths: VectorPath[] = [];
 
     let processedData = data;
     if (params.colorMode !== 'color') {
         processedData = await applyColorMode(data, width, height, params.colorMode);
     }
 
-    const blurRadius = (params.blur || 0) * samplingScale;
+    const blurRadius = (params.blur || 0) * requestedScale;
     processedData = await applyBlur(processedData, width, height, blurRadius);
 
-    const k = params.colorMode === 'binary' ? 2 : Math.max(2, params.colors);
-    let labels = await runKMeans(processedData, width * height, k);
-    // @ts-ignore
-    const centroids = labels.centroids as Rgba[];
+    const kMeansHash = getKMeansHash(params, requestedScale);
+    let labels: Uint8Array;
+    let centroids: Rgba[];
+
+    if (_kMeansCache && _kMeansCache.hash === kMeansHash && _kMeansCache.labels.length === width * height) {
+        labels = _kMeansCache.labels;
+        centroids = _kMeansCache.centroids;
+    } else {
+        const k = params.colorMode === 'binary' ? 2 : Math.max(2, params.colors);
+        const result = await runKMeans(processedData, width * height, k);
+        labels = result;
+        // @ts-ignore
+        centroids = result.centroids;
+        _kMeansCache = { hash: kMeansHash, labels: labels, centroids: centroids };
+    }
 
     await yieldToMain();
     
+    let workingLabels = labels;
     if (params.autoAntiAlias) {
-        labels = await applyMajorityFilter(labels, width, height, 2);
+        workingLabels = await applyMajorityFilter(workingLabels, width, height, 2);
     }
-    
-    const scaledNoise = params.noise * (samplingScale * samplingScale);
-    labels = denoiseLabels(labels, width, height, params.noise);
+    workingLabels = denoiseLabels(workingLabels, width, height, params.noise);
 
-    // --- Background Removal Logic ---
     let targetBgColor: Rgba | undefined;
     if (params.backgroundColor) {
         targetBgColor = { ...params.backgroundColor, a: 255 };
@@ -696,23 +706,37 @@ export const traceImage = async (originalImageData: ImageData, params: TracerPar
     });
 
     if (params.ignoreWhite && bgLabelIds.length > 0) {
+        if (workingLabels === labels) {
+             workingLabels = new Uint8Array(labels);
+        }
         if (params.smartBackground) {
-            markBackground(labels, width, height, bgLabelIds);
+            markBackground(workingLabels, width, height, bgLabelIds);
         } else {
-            for(let i=0; i<labels.length; i++) {
-                if (bgLabelIds.includes(labels[i])) labels[i] = 255;
+            for(let i=0; i<workingLabels.length; i++) {
+                if (bgLabelIds.includes(workingLabels[i])) workingLabels[i] = 255;
             }
         }
     }
 
-    // --- Layer Sorting ---
     const labelCounts = new Map<number, number>();
-    for(let i=0; i<labels.length; i++) {
-        const l = labels[i];
+    let validPixelCount = 0;
+    for(let i=0; i<workingLabels.length; i++) {
+        const l = workingLabels[i];
         if (l !== 255) {
              labelCounts.set(l, (labelCounts.get(l) || 0) + 1);
+             validPixelCount++;
         }
     }
+
+    const palette: PaletteItem[] = centroids.map((c, i) => {
+        const count = labelCounts.get(i) || 0;
+        return {
+            hex: rgbToHex(c.r, c.g, c.b),
+            r: c.r, g: c.g, b: c.b,
+            count: count,
+            ratio: validPixelCount > 0 ? count / validPixelCount : 0
+        };
+    }).sort((a, b) => b.count - a.count).filter(p => p.count > 0);
 
     let layersToTrace = centroids.map((c, i) => ({ 
         id: i, 
@@ -720,20 +744,20 @@ export const traceImage = async (originalImageData: ImageData, params: TracerPar
         count: labelCounts.get(i) || 0 
     }));
     
-    // Sort: Largest Count (Background) -> First (Bottom of stack)
     layersToTrace.sort((a, b) => b.count - a.count);
     
+    const paths: VectorPath[] = [];
     let processedCount = 0;
+    const scaledNoise = params.noise * (requestedScale * requestedScale);
+
     for (const layer of layersToTrace) {
         if (processedCount % 1 === 0) await yieldToMain();
         processedCount++;
         if (layer.count === 0) continue;
 
-        const loops = traceLayer(labels, width, height, layer.id, scaledNoise);
+        const loops = traceLayer(workingLabels, width, height, layer.id, scaledNoise);
         const hexColor = rgbToHex(layer.color.r, layer.color.g, layer.color.b);
         
-        // --- KEY FIX: Combine all loops for a single layer into ONE path ---
-        // This allows SVG 'fill-rule="evenodd"' to correctly handle holes (e.g. gaps in the cat's fur)
         const layerPathParts: string[] = [];
         
         loops.forEach((loop) => {
@@ -744,7 +768,6 @@ export const traceImage = async (originalImageData: ImageData, params: TracerPar
         });
 
         if (layerPathParts.length > 0) {
-            // Join all sub-paths into one large path string
             const combinedD = layerPathParts.join(' ');
             paths.push({
                 id: `layer-${layer.id}`,
@@ -758,12 +781,11 @@ export const traceImage = async (originalImageData: ImageData, params: TracerPar
         }
     }
 
-    // Added fill-rule="evenodd" to the export SVG string
     const svgString = `
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${originalImageData.width} ${originalImageData.height}">
         ${paths.map(p => `<path d="${p.d}" fill="${p.fill}" stroke="${p.fill}" stroke-width="0.25" stroke-linejoin="round" fill-rule="evenodd" />`).join('\n')}
       </svg>
     `;
 
-    return { paths, svgString };
+    return { paths, svgString, palette };
 };

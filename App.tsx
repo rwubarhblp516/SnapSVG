@@ -1,15 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Canvas } from './components/Canvas';
-import { TracerParams, VectorPath, ProcessingStats } from './types';
-import { traceImage, estimateColors } from './services/mockVTracer';
-import { segmentImageWithGemini } from './services/aiService';
-import { parseSvgToPaths } from './utils/svgParser';
+import { TracerParams, VectorPath, ProcessingStats, PaletteItem } from './types';
+import { traceImage, estimateColors, autoDetectParams } from './services/mockVTracer';
+// Removed aiService imports since we are now fully local
 
 // Type for History Step
 interface HistoryStep {
   paths: VectorPath[];
   params: TracerParams;
+  palette: PaletteItem[];
 }
 
 const App: React.FC = () => {
@@ -34,41 +34,46 @@ const App: React.FC = () => {
   const [imageFile, setImageFile] = useState<File | null>(null); 
   
   const [svgPaths, setSvgPaths] = useState<VectorPath[]>([]);
+  // NEW: Palette State
+  const [palette, setPalette] = useState<PaletteItem[]>([]);
+
   const [processing, setProcessing] = useState(false);
   const [aiProcessing, setAiProcessing] = useState(false); 
-  const [isAiMode, setIsAiMode] = useState(false); 
   const [stats, setStats] = useState<ProcessingStats>({ durationMs: 0, pathCount: 0 });
   
   // Color Picker
   const [isPickingColor, setIsPickingColor] = useState(false);
   
-  // API Key State (Persisted)
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('snapsvg_api_key') || '');
+  // API Key State (Deprecated/Hidden, but kept for type compatibility)
+  const [apiKey, setApiKey] = useState('');
 
   // History State
   const [history, setHistory] = useState<HistoryStep[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  
+  // FIX: Use ref to track index so addToHistory remains stable and doesn't trigger useEffect loop
+  const historyIndexRef = useRef(historyIndex);
+  useEffect(() => { historyIndexRef.current = historyIndex; }, [historyIndex]);
+
   const isUndoRedoAction = useRef(false); // Flag to prevent infinite loops
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- Persistence ---
-  useEffect(() => {
-    localStorage.setItem('snapsvg_api_key', apiKey);
-  }, [apiKey]);
-
   // --- History Management ---
   
-  const addToHistory = useCallback((newPaths: VectorPath[], newParams: TracerParams) => {
+  // FIX: Stable callback with no dependencies to prevent infinite loop in Vectorization Effect
+  const addToHistory = useCallback((newPaths: VectorPath[], newParams: TracerParams, newPalette: PaletteItem[]) => {
     setHistory(prev => {
-        const currentSlice = prev.slice(0, historyIndex + 1);
+        const currentIdx = historyIndexRef.current;
+        const currentSlice = prev.slice(0, currentIdx + 1);
         // Limit to 10 steps
-        const newHistory = [...currentSlice, { paths: newPaths, params: newParams }];
+        const newHistory = [...currentSlice, { paths: newPaths, params: newParams, palette: newPalette }];
         if (newHistory.length > 10) newHistory.shift();
         return newHistory;
     });
-    setHistoryIndex(prev => Math.min(prev + 1, 9)); // Max index is 9 (if length 10) or length-1
-  }, [historyIndex]);
+    // Safely increment index, capping at 9
+    setHistoryIndex(prev => (prev < 9 ? prev + 1 : 9));
+  }, []);
 
   const handleUndo = useCallback(() => {
       if (historyIndex > 0) {
@@ -76,6 +81,7 @@ const App: React.FC = () => {
           const prevStep = history[historyIndex - 1];
           setSvgPaths(prevStep.paths);
           setParams(prevStep.params);
+          setPalette(prevStep.palette);
           setHistoryIndex(historyIndex - 1);
           // Wait for render cycle to clear flag
           setTimeout(() => { isUndoRedoAction.current = false; }, 100);
@@ -88,6 +94,7 @@ const App: React.FC = () => {
           const nextStep = history[historyIndex + 1];
           setSvgPaths(nextStep.paths);
           setParams(nextStep.params);
+          setPalette(nextStep.palette);
           setHistoryIndex(historyIndex + 1);
           setTimeout(() => { isUndoRedoAction.current = false; }, 100);
       }
@@ -181,9 +188,9 @@ const App: React.FC = () => {
             setHistory([]); 
             setHistoryIndex(-1);
             setSvgPaths([]);
+            setPalette([]);
         }
         setImageUrl(url);
-        setIsAiMode(false); 
     };
     img.src = url;
   };
@@ -212,67 +219,60 @@ const App: React.FC = () => {
   // Callback when paths change manually (Drag/Delete in Canvas)
   const handlePathsChange = useCallback((newPaths: VectorPath[]) => {
       setSvgPaths(newPaths);
-      addToHistory(newPaths, params);
-  }, [params, addToHistory]);
+      // Persist current palette in history even if paths changed manually
+      addToHistory(newPaths, params, palette);
+  }, [params, palette, addToHistory]);
 
-  // --- AI Split Logic ---
-  const handleAiSplit = async () => {
-      if (!imageUrl || !imageDims.width) return;
-      
-      if (!apiKey && !process.env.API_KEY) {
-          alert("请先在左侧设置栏底部输入 Gemini API Key");
-          return;
-      }
+  // --- REPLACEMENT: Local Smart Auto-Tune Logic ---
+  const handleLocalAutoTune = () => {
+      if (!imageData) return;
       
       setAiProcessing(true);
-      try {
-          const response = await fetch(imageUrl);
-          const blob = await response.blob();
-          const reader = new FileReader();
-          reader.onloadend = async () => {
-              const base64data = reader.result as string;
+      // Simulate a brief "thinking" time for UX
+      setTimeout(() => {
+          try {
+              // Analyze locally
+              const suggestedParams = autoDetectParams(imageData);
               
-              try {
-                  const svgString = await segmentImageWithGemini(base64data, imageDims.width, imageDims.height, apiKey);
-                  const paths = parseSvgToPaths(svgString);
-                  
-                  if (paths.length > 0) {
-                      setSvgPaths(paths);
-                      setIsAiMode(true);
-                      addToHistory(paths, params);
-                  } else {
-                      alert("AI returned invalid data.");
-                  }
-              } catch (err: any) {
-                  console.error(err);
-                  alert(`AI processing failed: ${err.message || "Unknown error"}`);
-              } finally {
-                  setAiProcessing(false);
-              }
-          };
-          reader.readAsDataURL(blob);
-      } catch (e) {
-          console.error(e);
-          setAiProcessing(false);
-      }
+              setParams(prev => ({
+                  ...prev,
+                  ...suggestedParams,
+                  // Ensure defaults preserved if missing
+                  colors: suggestedParams.colors ?? prev.colors,
+                  paths: suggestedParams.paths ?? prev.paths,
+                  corners: suggestedParams.corners ?? prev.corners,
+                  noise: suggestedParams.noise ?? prev.noise,
+                  blur: suggestedParams.blur ?? prev.blur,
+                  colorMode: (suggestedParams.colorMode as any) ?? prev.colorMode,
+                  sampling: suggestedParams.sampling ?? prev.sampling
+              }));
+          } catch (err) {
+              console.error(err);
+          } finally {
+              setAiProcessing(false);
+          }
+      }, 600);
   };
 
   // --- Vectorization Effect (Local) ---
   useEffect(() => {
-    if (!imageData || isAiMode || isUndoRedoAction.current) return; 
+    if (!imageData || isUndoRedoAction.current) return; 
     
+    // This effect runs whenever `params` changes.
+    // So when AI updates params, this runs automatically.
     const timer = setTimeout(async () => {
         setProcessing(true);
         const start = performance.now();
         try {
             const result = await traceImage(imageData, params);
             setSvgPaths(result.paths);
+            setPalette(result.palette);
             setStats({
                 durationMs: Math.round(performance.now() - start),
                 pathCount: result.paths.length
             });
             // Auto-save history after successful generation
-            addToHistory(result.paths, params);
+            addToHistory(result.paths, params, result.palette);
         } catch (e) {
             console.error("Vectorization failed", e);
         } finally {
@@ -280,7 +280,7 @@ const App: React.FC = () => {
         }
     }, 400); 
     return () => clearTimeout(timer);
-  }, [params, imageData, isAiMode, addToHistory]);
+  }, [params, imageData, addToHistory]);
 
   // --- Downloads ---
   const downloadSvg = () => {
@@ -296,7 +296,7 @@ ${pathsString}
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = isAiMode ? 'snapsvg-ai-split.svg' : 'snapsvg-vector.svg';
+    a.download = 'snapsvg-vector.svg';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -353,14 +353,16 @@ ${pathsString}
             hasImage={!!imageUrl}
             isPickingColor={isPickingColor}
             setIsPickingColor={setIsPickingColor}
-            onAiSplit={handleAiSplit}
+            onAiSplit={handleLocalAutoTune}
             aiProcessing={aiProcessing}
             // Undo/Redo
             onUndo={handleUndo}
             onRedo={handleRedo}
             canUndo={historyIndex > 0}
             canRedo={historyIndex < history.length - 1}
-            // API Key
+            // Palette
+            palette={palette}
+            // API Key (Hidden now)
             apiKey={apiKey}
             setApiKey={setApiKey}
         />
@@ -374,6 +376,11 @@ ${pathsString}
             isPickingColor={isPickingColor}
             onColorPick={handleColorPick}
             onPathsChange={handlePathsChange}
+            // Pass Undo/Redo props to Canvas
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            canUndo={historyIndex > 0}
+            canRedo={historyIndex < history.length - 1}
         />
     </div>
   );

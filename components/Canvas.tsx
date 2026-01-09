@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
-import { ZoomIn, ZoomOut, Move, Grid, Square, MousePointer2, BoxSelect, Trash2, Split, Box, RotateCcw, Pipette, Layers } from 'lucide-react';
+import { ZoomIn, ZoomOut, Move, Grid, Square, MousePointer2, BoxSelect, Trash2, Split, Box, RotateCcw, Pipette, Layers, Undo2, Redo2 } from 'lucide-react';
 import { VectorPath, ViewMode } from '../types';
 
 interface CanvasProps {
@@ -12,6 +12,11 @@ interface CanvasProps {
   onColorPick: (x: number, y: number) => void;
   // New callback to sync changes (drag/delete) back to App for history tracking
   onPathsChange: (newPaths: VectorPath[]) => void;
+  // History
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 export const Canvas: React.FC<CanvasProps> = ({
@@ -22,7 +27,11 @@ export const Canvas: React.FC<CanvasProps> = ({
   processing,
   isPickingColor,
   onColorPick,
-  onPathsChange
+  onPathsChange,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo
 }) => {
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -46,11 +55,14 @@ export const Canvas: React.FC<CanvasProps> = ({
   const dividerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  
+  // Direct DOM Manipulation Refs for Performance
+  const contentWrapperRef = useRef<HTMLDivElement>(null);
 
   const [viewMode, setViewMode] = useState<ViewMode>('split');
   const [selectedPathId, setSelectedPathId] = useState<string | null>(null);
   
-  // Local paths state for smooth dragging, synced with props
+  // Local paths state for syncing, but NOT for drag updates (performance)
   const [localPaths, setLocalPaths] = useState<VectorPath[]>([]);
 
   // Sync paths when they update from parent (e.g. undo/redo or new trace)
@@ -199,17 +211,31 @@ export const Canvas: React.FC<CanvasProps> = ({
         return;
     }
 
-    // Canvas Panning
-    if (isDraggingCanvas) {
-      setPosition({
-        x: e.clientX - dragStart.x,
-        y: e.clientY - dragStart.y
-      });
+    // Canvas Panning (Optimized with Direct DOM)
+    if (isDraggingCanvas && contentWrapperRef.current) {
+      const newX = e.clientX - dragStart.x;
+      const newY = e.clientY - dragStart.y;
+      
+      // Update DOM directly to avoid re-renders during drag
+      contentWrapperRef.current.style.transform = `translate(${newX}px, ${newY}px) scale(${scale})`;
+      
+      // Store current pos in Ref or State? 
+      // We will sync to State on MouseUp. But for smooth frame-to-frame, 
+      // we are trusting the DOM style we just set.
+      // However, we need 'position' state for other calcs.
+      // To keep it sync without re-rendering, we just skip setPosition here.
     }
   };
 
-  const handleGlobalMouseUp = () => {
-    setIsDraggingCanvas(false);
+  const handleGlobalMouseUp = (e: React.MouseEvent) => {
+    if (isDraggingCanvas) {
+        setIsDraggingCanvas(false);
+        // Sync final position to React State
+        const newX = e.clientX - dragStart.x;
+        const newY = e.clientY - dragStart.y;
+        setPosition({ x: newX, y: newY });
+    }
+
     setIsRotatingIso(false);
     if (isDraggingSplitRef.current) {
         isDraggingSplitRef.current = false;
@@ -245,54 +271,57 @@ export const Canvas: React.FC<CanvasProps> = ({
       if (width > 0 && height > 0 && viewMode !== 'isometric') fitToScreen();
   }, [width, height]);
 
-  // Path Dragging Logic
+  // --- Optimized Path Dragging ---
   const handlePathMouseDown = (e: React.MouseEvent, pId: string) => {
-    if (viewMode === 'isometric' || isPickingColor) return; // Disable drag in 3D or Pick Mode
+    if (viewMode === 'isometric' || isPickingColor) return; 
     e.stopPropagation(); 
     setSelectedPathId(pId);
     
     const startX = e.clientX;
     const startY = e.clientY;
+    
+    const targetGroup = document.getElementById(`path-group-${pId}`);
+    if (!targetGroup) return;
+
+    // Find initial values
     const pathIndex = localPaths.findIndex(p => p.id === pId);
     if (pathIndex === -1) return;
     const initialPathX = localPaths[pathIndex].x;
     const initialPathY = localPaths[pathIndex].y;
     
-    let hasMoved = false;
+    let currentDx = 0;
+    let currentDy = 0;
 
     const moveHandler = (moveEvent: MouseEvent) => {
-        hasMoved = true;
-        const dx = (moveEvent.clientX - startX) / scale;
-        const dy = (moveEvent.clientY - startY) / scale;
-        setLocalPaths(prev => {
-            const newPaths = [...prev];
-            const idx = newPaths.findIndex(p => p.id === pId);
-            if (idx !== -1) {
-                newPaths[idx] = { ...newPaths[idx], x: initialPathX + dx, y: initialPathY + dy };
-            }
-            return newPaths;
-        });
+        currentDx = (moveEvent.clientX - startX) / scale;
+        currentDy = (moveEvent.clientY - startY) / scale;
+        
+        // Direct DOM Manipulation for smooth 60fps
+        const newX = initialPathX + currentDx;
+        const newY = initialPathY + currentDy;
+        targetGroup.setAttribute('transform', `translate(${newX}, ${newY})`);
     };
 
     const upHandler = () => {
         document.removeEventListener('mousemove', moveHandler);
         document.removeEventListener('mouseup', upHandler);
         
-        // Only trigger history update if object actually moved
-        if (hasMoved) {
-            // Need to get the latest state. 
-            // Since we are inside a closure, we use a functional update on parent or callback.
-            // However, localPaths in this scope is stale.
-            // We can trust React setState batching or use the setter result.
-            // A safer way: re-find the path in the *current* localPaths logic? 
-            // Simpler: Just rely on the component state having been updated by moveHandler.
-            // But we need the *final* value to pass to onPathsChange.
-            
-            // We will pass the function to setLocalPaths which gets the prev value, 
-            // and we can also side-effect call onPathsChange with that value.
-            setLocalPaths(latestPaths => {
-                onPathsChange(latestPaths);
-                return latestPaths;
+        // Sync to React State ONLY once at the end
+        if (currentDx !== 0 || currentDy !== 0) {
+            setLocalPaths(prev => {
+                const newPaths = [...prev];
+                const idx = newPaths.findIndex(p => p.id === pId);
+                if (idx !== -1) {
+                    newPaths[idx] = { 
+                        ...newPaths[idx], 
+                        x: initialPathX + currentDx, 
+                        y: initialPathY + currentDy 
+                    };
+                }
+                // Important: Notify parent here with the CALCULATED new state
+                // We cannot call onPathsChange(localPaths) because localPaths is stale in this closure
+                onPathsChange(newPaths);
+                return newPaths;
             });
         }
     };
@@ -316,7 +345,11 @@ export const Canvas: React.FC<CanvasProps> = ({
             {localPaths.map((path) => {
                 const isSelected = selectedPathId === path.id;
                 return (
-                    <g key={path.id} transform={`translate(${path.x}, ${path.y})`}>
+                    <g 
+                        key={path.id} 
+                        id={`path-group-${path.id}`} // Helper ID for direct DOM manipulation
+                        transform={`translate(${path.x}, ${path.y})`}
+                    >
                         <path
                             d={path.d}
                             fill={path.fill}
@@ -351,11 +384,18 @@ export const Canvas: React.FC<CanvasProps> = ({
   }
 
   const renderContent = () => {
+    // We apply transform directly via Ref during drag, but fall back to React state 'position' when not dragging
+    // This ensures React is the source of truth when not interacting
+    const transformStyle = isDraggingCanvas && contentWrapperRef.current 
+        ? contentWrapperRef.current.style.transform 
+        : `translate(${position.x}px, ${position.y}px) scale(${scale})`;
+
     const wrapperStyle: React.CSSProperties = {
         width: width,
         height: height,
-        transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
-        transformOrigin: '0 0', // Default for 2D panning
+        transform: transformStyle,
+        transformOrigin: '0 0', 
+        // Important: Remove transition during drag for responsiveness
         transition: isDraggingCanvas ? 'none' : 'transform 0.1s ease-out',
         position: 'absolute',
         top: 0,
@@ -370,29 +410,35 @@ export const Canvas: React.FC<CanvasProps> = ({
 
     // --- ISOMETRIC VIEW ---
     if (viewMode === 'isometric') {
+        const layerSpacing = 40; 
+        const totalZHeight = (groupedPaths.length - 1) * layerSpacing;
+        const zOriginOffset = totalZHeight / 2;
+
         return (
-            <div className="w-full h-full flex items-center justify-center overflow-visible" style={{ perspective: '2000px' }}>
+            <div className="w-full h-full relative overflow-visible" style={{ perspective: '2000px' }}>
                 <div 
                     style={{
+                        position: 'absolute',
+                        top: '50%',
+                        left: '50%',
                         width: width,
                         height: height,
-                        transform: `scale(${scale}) rotateX(${isoRotation.x}deg) rotateZ(${isoRotation.z}deg)`,
+                        transform: `translate3d(-50%, -50%, 0) scale(${scale}) rotateX(${isoRotation.x}deg) rotateZ(${isoRotation.z}deg)`,
                         transformStyle: 'preserve-3d',
                         transformOrigin: '50% 50%', 
                         transition: isRotatingIso ? 'none' : 'transform 0.3s ease-out'
                     }}
-                    className="relative shadow-2xl"
+                    className="relative"
                 >
                     {/* Exploded Layers */}
                     {groupedPaths.map(([color, paths], index) => {
-                        // --- KEY FIX: Increased Z spacing to 25px for better visibility ---
-                        const zOffset = index * 25; 
+                        const zPos = (index * layerSpacing) - zOriginOffset;
                         return (
                             <div 
                                 key={color}
                                 style={{ 
                                     ...layerStyle, 
-                                    transform: `translateZ(${zOffset}px)`,
+                                    transform: `translateZ(${zPos}px)`,
                                     // Stronger shadow for depth perception
                                     filter: `drop-shadow(5px 5px 10px rgba(0,0,0,0.5))`
                                 }}
@@ -423,7 +469,7 @@ export const Canvas: React.FC<CanvasProps> = ({
 
     if (viewMode === 'split') {
         return (
-            <div style={wrapperStyle} className="will-change-transform">
+            <div ref={contentWrapperRef} style={wrapperStyle} className="will-change-transform">
                 <div ref={vectorLayerRef} style={{ ...layerStyle, clipPath: `inset(0 0 0 ${splitRatioRef.current * 100}%)` }} className="z-0 will-change-[clip-path]"> 
                     {SvgLayer}
                 </div>
@@ -442,25 +488,48 @@ export const Canvas: React.FC<CanvasProps> = ({
     }
 
     // Default: Vector Only
-    return <div style={wrapperStyle}>{SvgLayer}</div>;
+    return <div ref={contentWrapperRef} style={wrapperStyle}>{SvgLayer}</div>;
   };
 
   return (
     <div className="flex-1 min-w-0 flex flex-col h-full relative" ref={canvasRef} tabIndex={0} style={{ outline: 'none' }}>
       {/* Toolbar */}
       <div className="h-14 bg-[#0f172a]/80 backdrop-blur-md border-b border-slate-800/50 flex items-center justify-between px-6 z-20 shadow-lg shrink-0">
-         <div className="flex items-center gap-1 bg-slate-900/50 p-1 rounded-lg border border-slate-800">
-            <button onClick={() => setViewMode('split')} className={`p-2 rounded-md transition-all ${viewMode === 'split' ? 'bg-slate-700 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-white/5'}`} title="分屏对比">
-                <Grid className="w-4 h-4" />
-            </button>
-            <button onClick={() => setViewMode('vector')} className={`p-2 rounded-md transition-all ${viewMode === 'vector' ? 'bg-slate-700 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-white/5'}`} title="仅矢量">
-                <Square className="w-4 h-4" />
-            </button>
-            {/* Divider */}
-            <div className="w-px h-4 bg-slate-700 mx-1"></div>
-            <button onClick={() => setViewMode('isometric')} className={`p-2 rounded-md transition-all ${viewMode === 'isometric' ? 'bg-slate-700 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-white/5'}`} title="等距爆炸视图 (3D)">
-                <Box className="w-4 h-4" />
-            </button>
+         <div className="flex items-center gap-4">
+             {/* View Mode Switcher */}
+             <div className="flex items-center gap-1 bg-slate-900/50 p-1 rounded-lg border border-slate-800">
+                <button onClick={() => setViewMode('split')} className={`p-2 rounded-md transition-all ${viewMode === 'split' ? 'bg-slate-700 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-white/5'}`} title="分屏对比">
+                    <Grid className="w-4 h-4" />
+                </button>
+                <button onClick={() => setViewMode('vector')} className={`p-2 rounded-md transition-all ${viewMode === 'vector' ? 'bg-slate-700 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-white/5'}`} title="仅矢量">
+                    <Square className="w-4 h-4" />
+                </button>
+                {/* Divider */}
+                <div className="w-px h-4 bg-slate-700 mx-1"></div>
+                <button onClick={() => setViewMode('isometric')} className={`p-2 rounded-md transition-all ${viewMode === 'isometric' ? 'bg-slate-700 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-white/5'}`} title="等距爆炸视图 (3D)">
+                    <Box className="w-4 h-4" />
+                </button>
+             </div>
+
+             {/* Undo / Redo in Toolbar */}
+             <div className="flex items-center gap-1 bg-slate-900/50 p-1 rounded-lg border border-slate-800">
+                <button 
+                    onClick={onUndo} 
+                    disabled={!canUndo}
+                    className="p-2 rounded-md text-slate-400 hover:text-white hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition-all" 
+                    title="撤销 (Ctrl+Z)"
+                >
+                    <Undo2 className="w-4 h-4" />
+                </button>
+                <button 
+                    onClick={onRedo} 
+                    disabled={!canRedo}
+                    className="p-2 rounded-md text-slate-400 hover:text-white hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent transition-all" 
+                    title="重做 (Ctrl+Y)"
+                >
+                    <Redo2 className="w-4 h-4" />
+                </button>
+             </div>
          </div>
 
          {/* Hint Text */}
