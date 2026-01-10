@@ -238,7 +238,9 @@ self.onmessage = async (e: MessageEvent) => {
 
             // 检查是否可以使用并行版本
             // 🚀 并行版本参数已修复 (角度转弧度, 颜色位移)
-            const canUseParallel = _threadPoolInitialized && finalRgbaData && finalWidth && finalHeight && colorMode === 'color';
+            // 只有当 params.useParallel 为 true (或 undefined 默认为 true) 时才并行
+            const shouldParallel = params.useParallel !== false;
+            const canUseParallel = shouldParallel && _threadPoolInitialized && finalRgbaData && finalWidth && finalHeight && colorMode === 'color';
 
             if (canUseParallel) {
                 console.log(`[WASM Trace] 🚀 并行矢量化: ${finalWidth}x${finalHeight} (${(pixelCount / 1000000).toFixed(2)}M 像素), 颜色=${colorCount}`);

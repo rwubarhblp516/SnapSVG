@@ -13,6 +13,7 @@ export interface TracerParams {
   useWasm?: boolean; // 使用 WASM 后端 (实验性)
   palette?: string[]; // Optional target palette for strict quantization
   usePaletteMapping?: boolean; // Force map to source palette (low fidelity when enabled)
+  useParallel?: boolean; // 使用多线程并行加速 (WASM)
 }
 
 export interface VectorPath {

@@ -28,7 +28,8 @@ const App: React.FC = () => {
         colorMode: 'color',
         autoAntiAlias: true,
         usePaletteMapping: false,
-        backgroundColor: undefined
+        backgroundColor: undefined,
+        useParallel: true
     });
 
     const [imageUrl, setImageUrl] = useState<string | null>(null);

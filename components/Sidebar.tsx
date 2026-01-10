@@ -283,243 +283,274 @@ export const Sidebar: React.FC<SidebarProps> = ({
         const threadStatusInfo = getThreadStatusInfo();
         return (
             <div className="flex flex-col h-full">
-            {/* Top: Preset Selector */}
-            <div className="p-5 border-b border-slate-800 space-y-4 bg-slate-900/50">
-                <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold uppercase tracking-wider text-slate-500">预设场景 (Scene)</label>
-                    {processing && <span className="text-[10px] text-purple-400 font-mono animate-pulse">PROCESSING...</span>}
-                </div>
-                <div className={`text-[10px] font-mono ${threadStatusInfo.className}`}>
-                    {threadStatusInfo.text}
-                </div>
-
-                <div className="relative">
-                    <select
-                        value={selectedPreset}
-                        onChange={(e) => applyPreset(e.target.value as PresetName)}
-                        className="w-full bg-slate-800 text-white text-sm px-4 py-3 rounded-xl border border-slate-700 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none appearance-none cursor-pointer hover:bg-slate-750 transition-colors shadow-sm"
-                    >
-                        {Object.entries(PRESETS).map(([key, val]) => (
-                            <option key={key} value={key}>{val.label}</option>
-                        ))}
-                    </select>
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-                </div>
-
-                {/* Undo / Redo Row */}
-                <div className="flex gap-2">
-                    <button
-                        onClick={onUndo}
-                        disabled={!canUndo}
-                        className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        title="撤销 (Ctrl+Z)"
-                    >
-                        <Undo2 className="w-3.5 h-3.5" />
-                        撤销
-                    </button>
-                    <button
-                        onClick={onRedo}
-                        disabled={!canRedo}
-                        className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        title="重做 (Ctrl+Shift+Z)"
-                    >
-                        <Redo2 className="w-3.5 h-3.5" />
-                        重做
-                    </button>
-                </div>
-
-                {/* Smart Auto Tune Button */}
-                <button
-                    onClick={onAiSplit}
-                    disabled={aiProcessing}
-                    className="w-full py-2.5 bg-gradient-to-r from-emerald-600/20 to-teal-600/20 hover:from-emerald-600/30 hover:to-teal-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl flex items-center justify-center gap-2 text-xs font-semibold transition-all group relative overflow-hidden active:scale-[0.98] disabled:opacity-50"
-                >
-                    <Wand className={`w-4 h-4 transition-transform ${aiProcessing ? 'animate-spin' : 'group-hover:rotate-12'}`} />
-                    <span>{aiProcessing ? '分析中...' : '推荐设置 (Recommended)'}</span>
-                    <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                </button>
-
-                {/* Detection Result Banner */}
-                {detectedImageType && (
-                    <div className="bg-gradient-to-r from-emerald-900/30 to-teal-900/30 border border-emerald-500/20 rounded-lg px-3 py-2 text-center animate-pulse">
-                        <span className="text-xs text-emerald-300">
-                            ✓ 检测到: <strong>{detectedImageType}</strong>
-                        </span>
+                {/* Top: Preset Selector */}
+                <div className="p-5 border-b border-slate-800 space-y-4 bg-slate-900/50">
+                    <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold uppercase tracking-wider text-slate-500">预设场景 (Scene)</label>
+                        {processing && <span className="text-[10px] text-purple-400 font-mono animate-pulse">PROCESSING...</span>}
                     </div>
-                )}
-            </div>
+                    <div className={`text-[10px] font-mono ${threadStatusInfo.className}`}>
+                        {threadStatusInfo.text}
+                    </div>
 
-            {/* Scrollable Settings */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-6">
-
-                {/* Colors Slider & Palette (Main Group) */}
-                <div className="space-y-4 rounded-xl bg-slate-800/20 p-4 border border-slate-800">
-                    <Slider
-                        label="色彩数量 (Colors)"
-                        value={params.colors}
-                        min={2} max={64} step={1}
-                        onValueChange={(v) => updateParam('colors', v)}
-                    />
-                    <p className="text-[10px] text-slate-500 -mt-2 mb-2 px-1">
-                        * 控制矢量图使用的颜色数量。越少=越简洁，越多=越精细
-                    </p>
-                    <div className="flex items-center justify-between gap-3 rounded-lg bg-slate-900/50 p-2 border border-slate-800">
-                        <div className="flex-1">
-                            <div className="text-[11px] text-slate-200">色板映射 (Palette Lock)</div>
-                            <div className="text-[10px] text-slate-500">
-                                将颜色固定到原图色板，可能更稳定但饱和度会降低
-                            </div>
-                        </div>
-                        <button
-                            type="button"
-                            aria-pressed={params.usePaletteMapping === true}
-                            onClick={() => updateParam('usePaletteMapping', !params.usePaletteMapping)}
-                            className={`inline-flex h-5 w-9 items-center rounded-full border transition-colors ${params.usePaletteMapping ? 'bg-emerald-500/70 border-emerald-400/40' : 'bg-slate-700 border-slate-600'}`}
+                    <div className="relative">
+                        <select
+                            value={selectedPreset}
+                            onChange={(e) => applyPreset(e.target.value as PresetName)}
+                            className="w-full bg-slate-800 text-white text-sm px-4 py-3 rounded-xl border border-slate-700 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none appearance-none cursor-pointer hover:bg-slate-750 transition-colors shadow-sm"
                         >
-                            <span
-                                className={`ml-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${params.usePaletteMapping ? 'translate-x-4' : 'translate-x-0'}`}
-                            />
+                            {Object.entries(PRESETS).map(([key, val]) => (
+                                <option key={key} value={key}>{val.label}</option>
+                            ))}
+                        </select>
+                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                    </div>
+
+                    {/* Undo / Redo Row */}
+                    <div className="flex gap-2">
+                        <button
+                            onClick={onUndo}
+                            disabled={!canUndo}
+                            className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="撤销 (Ctrl+Z)"
+                        >
+                            <Undo2 className="w-3.5 h-3.5" />
+                            撤销
+                        </button>
+                        <button
+                            onClick={onRedo}
+                            disabled={!canRedo}
+                            className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="重做 (Ctrl+Shift+Z)"
+                        >
+                            <Redo2 className="w-3.5 h-3.5" />
+                            重做
                         </button>
                     </div>
-                    {/* Original Source Palette */}
-                    {renderPaletteSection(originalPalette, "原图色板 (Source)")}
-                    {/* Vector Output Palette */}
-                    {renderPaletteSection(palette, "检测到的色板 (Vector)", true)}
+
+                    {/* Smart Auto Tune Button */}
+                    <button
+                        onClick={onAiSplit}
+                        disabled={aiProcessing}
+                        className="w-full py-2.5 bg-gradient-to-r from-emerald-600/20 to-teal-600/20 hover:from-emerald-600/30 hover:to-teal-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl flex items-center justify-center gap-2 text-xs font-semibold transition-all group relative overflow-hidden active:scale-[0.98] disabled:opacity-50"
+                    >
+                        <Wand className={`w-4 h-4 transition-transform ${aiProcessing ? 'animate-spin' : 'group-hover:rotate-12'}`} />
+                        <span>{aiProcessing ? '分析中...' : '推荐设置 (Recommended)'}</span>
+                        <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    </button>
+
+                    {/* Detection Result Banner */}
+                    {detectedImageType && (
+                        <div className="bg-gradient-to-r from-emerald-900/30 to-teal-900/30 border border-emerald-500/20 rounded-lg px-3 py-2 text-center animate-pulse">
+                            <span className="text-xs text-emerald-300">
+                                ✓ 检测到: <strong>{detectedImageType}</strong>
+                            </span>
+                        </div>
+                    )}
                 </div>
 
-                {/* Sampling (Upscale) Group */}
-                <div className="space-y-3 rounded-xl bg-slate-800/20 p-4 border border-slate-800">
-                    <label className="text-sm font-medium text-slate-200 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <Microscope className="w-4 h-4 text-blue-400" />
-                            <span>采样精度 (Upscale)</span>
-                        </div>
-                        <span className="text-[10px] text-slate-500 font-mono">
-                            {params.sampling === 1 ? '1x' : params.sampling === 2 ? '2x' : '4x'}
-                        </span>
-                    </label>
+                {/* Scrollable Settings */}
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-6">
 
-                    <div className="grid grid-cols-3 gap-2 bg-slate-900/50 p-1 rounded-xl border border-slate-800">
-                        {[1, 2, 4].map(s => {
-                            const isActive = params.sampling === s;
-                            return (
-                                <button
-                                    key={s}
-                                    onClick={() => { if (params.sampling !== s) updateParam('sampling', s); }}
-                                    className={`
+                    {/* Colors Slider & Palette (Main Group) */}
+                    <div className="space-y-4 rounded-xl bg-slate-800/20 p-4 border border-slate-800">
+                        <Slider
+                            label="色彩数量 (Colors)"
+                            value={params.colors}
+                            min={2} max={64} step={1}
+                            onValueChange={(v) => updateParam('colors', v)}
+                        />
+                        <p className="text-[10px] text-slate-500 -mt-2 mb-2 px-1">
+                            * 控制矢量图使用的颜色数量。越少=越简洁，越多=越精细
+                        </p>
+                        <div className="flex items-center justify-between gap-3 rounded-lg bg-slate-900/50 p-2 border border-slate-800">
+                            <div className="flex-1">
+                                <div className="text-[11px] text-slate-200">色板映射 (Palette Lock)</div>
+                                <div className="text-[10px] text-slate-500">
+                                    将颜色固定到原图色板，可能更稳定但饱和度会降低
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                aria-pressed={params.usePaletteMapping === true}
+                                onClick={() => updateParam('usePaletteMapping', !params.usePaletteMapping)}
+                                className={`inline-flex h-5 w-9 items-center rounded-full border transition-colors ${params.usePaletteMapping ? 'bg-emerald-500/70 border-emerald-400/40' : 'bg-slate-700 border-slate-600'}`}
+                            >
+                                <span
+                                    className={`ml-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${params.usePaletteMapping ? 'translate-x-4' : 'translate-x-0'}`}
+                                />
+                            </button>
+                        </div>
+                        {/* Original Source Palette */}
+                        {renderPaletteSection(originalPalette, "原图色板 (Source)")}
+                        {/* Vector Output Palette */}
+                        {renderPaletteSection(palette, "检测到的色板 (Vector)", true)}
+                    </div>
+
+                    {/* Sampling (Upscale) Group */}
+                    <div className="space-y-3 rounded-xl bg-slate-800/20 p-4 border border-slate-800">
+                        <label className="text-sm font-medium text-slate-200 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <Microscope className="w-4 h-4 text-blue-400" />
+                                <span>采样精度 (Upscale)</span>
+                            </div>
+                            <span className="text-[10px] text-slate-500 font-mono">
+                                {params.sampling === 1 ? '1x' : params.sampling === 2 ? '2x' : '4x'}
+                            </span>
+                        </label>
+
+                        <div className="grid grid-cols-3 gap-2 bg-slate-900/50 p-1 rounded-xl border border-slate-800">
+                            {[1, 2, 4].map(s => {
+                                const isActive = params.sampling === s;
+                                return (
+                                    <button
+                                        key={s}
+                                        onClick={() => { if (params.sampling !== s) updateParam('sampling', s); }}
+                                        className={`
                                     relative py-2.5 text-xs rounded-lg font-medium transition-all duration-200 flex flex-col items-center gap-1
                                     ${isActive
-                                            ? 'bg-slate-700 text-white shadow-sm ring-1 ring-slate-600'
-                                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                                        }
+                                                ? 'bg-slate-700 text-white shadow-sm ring-1 ring-slate-600'
+                                                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                                            }
                                 `}
-                                >
-                                    <span>{s}x</span>
-                                    <span className={`text-[9px] scale-90 ${isActive ? 'text-blue-400' : 'text-slate-600'}`}>
-                                        {s === 1 ? '标准' : s === 2 ? '清晰' : '极佳'}
-                                    </span>
-                                    {isActive && <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-blue-500 rounded-full shadow-[0_0_8px_rgba(59,130,246,0.8)]"></span>}
-                                </button>
-                            );
-                        })}
+                                    >
+                                        <span>{s}x</span>
+                                        <span className={`text-[9px] scale-90 ${isActive ? 'text-blue-400' : 'text-slate-600'}`}>
+                                            {s === 1 ? '标准' : s === 2 ? '清晰' : '极佳'}
+                                        </span>
+                                        {isActive && <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-blue-500 rounded-full shadow-[0_0_8px_rgba(59,130,246,0.8)]"></span>}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    {/* Details Group (Cleaned up) */}
+                    <div className="bg-[#0f172a]/40 rounded-xl p-4 border border-slate-800/50 space-y-4">
+                        <div className="flex items-center gap-2 mb-2">
+                            <Zap className="w-4 h-4 text-purple-400" />
+                            <span className="text-xs font-bold text-slate-300 tracking-wider">细节处理 (DETAILS)</span>
+                        </div>
+
+
+                        {/* Path Precision */}
+                        <Slider
+                            label="路径精度 (Paths)"
+                            value={params.paths}
+                            min={0} max={100} step={1}
+                            onValueChange={(v) => updateParam('paths', v)}
+                            className="py-1"
+                            formatValue={(v) => `${v}%`}
+                        />
+                        <p className="text-[10px] text-slate-500 -mt-2 mb-2 px-1">
+                            * 越高越贴合原图轮廓，越低线条越平滑
+                        </p>
+
+                        {/* Corner Threshold */}
+                        <Slider
+                            label="角点平滑 (Corners)"
+                            value={params.corners}
+                            min={0} max={100} step={1}
+                            onValueChange={(v) => updateParam('corners', v)}
+                            className="py-1"
+                            formatValue={(v) => `${v}`}
+                        />
+                        <p className="text-[10px] text-slate-500 -mt-2 mb-2 px-1">
+                            * 越高保留更多尖角，越低角点越圆润
+                        </p>
+
+                        {/* Noise Filter */}
+                        <Slider
+                            label="噪点过滤 (Noise)"
+                            value={params.noise}
+                            min={0} max={100} step={1}
+                            onValueChange={(v) => updateParam('noise', v)}
+                            className="py-1"
+                            formatValue={(v) => `${v}px`}
+                        />
+                        <p className="text-[10px] text-slate-500 -mt-2 mb-2 px-1">
+                            * 越高过滤斑点力度越强，可去除细小杂色
+                        </p>
+                        <div className="flex items-center justify-between gap-3 rounded-lg bg-slate-900/50 p-2 border border-slate-800">
+                            <div className="flex-1">
+                                <div className="text-[11px] text-slate-200">边缘平滑 (Anti-Alias)</div>
+                                <div className="text-[10px] text-slate-500">
+                                    轻微预平滑以减少锯齿，可能略微牺牲锐度
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                aria-pressed={params.autoAntiAlias === true}
+                                onClick={() => updateParam('autoAntiAlias', !params.autoAntiAlias)}
+                                className={`inline-flex h-5 w-9 items-center rounded-full border transition-colors ${params.autoAntiAlias ? 'bg-sky-500/70 border-sky-400/40' : 'bg-slate-700 border-slate-600'}`}
+                            >
+                                <span
+                                    className={`ml-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${params.autoAntiAlias ? 'translate-x-4' : 'translate-x-0'}`}
+                                />
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Performance Settings */}
+                    <div className="bg-[#0f172a]/40 rounded-xl p-4 border border-slate-800/50 space-y-3">
+                        <div className="flex items-center gap-2 mb-2">
+                            <Zap className="w-4 h-4 text-emerald-400" />
+                            <span className="text-xs font-bold text-slate-300 tracking-wider">性能 (PERFORMANCE)</span>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3 rounded-lg bg-slate-900/50 p-2 border border-slate-800">
+                            <div className="flex-1">
+                                <div className="text-[11px] text-slate-200">并行加速 (Parallel WASM)</div>
+                                <div className="text-[10px] text-slate-500">
+                                    使用多线程加速矢量化计算 (Beta)
+                                    {params.useParallel && <span className="text-emerald-500 ml-1">ON</span>}
+                                    {!params.useParallel && <span className="text-slate-500 ml-1">OFF</span>}
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                aria-pressed={params.useParallel === true}
+                                disabled={threadStatus?.state !== 'enabled'}
+                                title={threadStatus?.state !== 'enabled' ? '当前环境不支持多线程 或 初始化失败' : '切换单/多线程模式'}
+                                onClick={() => updateParam('useParallel', !params.useParallel)}
+                                className={`inline-flex h-5 w-9 items-center rounded-full border transition-colors ${params.useParallel ? 'bg-emerald-500/70 border-emerald-400/40' : 'bg-slate-700 border-slate-600'} ${threadStatus?.state !== 'enabled' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            >
+                                <span
+                                    className={`ml-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${params.useParallel ? 'translate-x-4' : 'translate-x-0'}`}
+                                />
+                            </button>
+                        </div>
                     </div>
                 </div>
 
-                {/* Details Group (Cleaned up) */}
-                <div className="bg-[#0f172a]/40 rounded-xl p-4 border border-slate-800/50 space-y-4">
-                    <div className="flex items-center gap-2 mb-2">
-                        <Zap className="w-4 h-4 text-purple-400" />
-                        <span className="text-xs font-bold text-slate-300 tracking-wider">细节处理 (DETAILS)</span>
-                    </div>
+                {/* Footer Actions */}
+                <div className="p-5 bg-slate-900 border-t border-slate-800 space-y-3 z-10">
+                    <button
+                        onClick={onDownloadSvg}
+                        className="w-full py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white rounded-xl shadow-lg shadow-purple-900/20 font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
+                    >
+                        <Download className="w-4 h-4" />
+                        导出 SVG 矢量图
+                    </button>
 
-
-                    {/* Path Precision */}
-                    <Slider
-                        label="路径精度 (Paths)"
-                        value={params.paths}
-                        min={0} max={100} step={1}
-                        onValueChange={(v) => updateParam('paths', v)}
-                        className="py-1"
-                        formatValue={(v) => `${v}%`}
-                    />
-                    <p className="text-[10px] text-slate-500 -mt-2 mb-2 px-1">
-                        * 越高越贴合原图轮廓，越低线条越平滑
-                    </p>
-
-                    {/* Corner Threshold */}
-                    <Slider
-                        label="角点平滑 (Corners)"
-                        value={params.corners}
-                        min={0} max={100} step={1}
-                        onValueChange={(v) => updateParam('corners', v)}
-                        className="py-1"
-                        formatValue={(v) => `${v}`}
-                    />
-                    <p className="text-[10px] text-slate-500 -mt-2 mb-2 px-1">
-                        * 越高保留更多尖角，越低角点越圆润
-                    </p>
-
-                    {/* Noise Filter */}
-                    <Slider
-                        label="噪点过滤 (Noise)"
-                        value={params.noise}
-                        min={0} max={100} step={1}
-                        onValueChange={(v) => updateParam('noise', v)}
-                        className="py-1"
-                        formatValue={(v) => `${v}px`}
-                    />
-                    <p className="text-[10px] text-slate-500 -mt-2 mb-2 px-1">
-                        * 越高过滤斑点力度越强，可去除细小杂色
-                    </p>
-                    <div className="flex items-center justify-between gap-3 rounded-lg bg-slate-900/50 p-2 border border-slate-800">
-                        <div className="flex-1">
-                            <div className="text-[11px] text-slate-200">边缘平滑 (Anti-Alias)</div>
-                            <div className="text-[10px] text-slate-500">
-                                轻微预平滑以减少锯齿，可能略微牺牲锐度
-                            </div>
-                        </div>
+                    <div className="flex gap-2">
                         <button
-                            type="button"
-                            aria-pressed={params.autoAntiAlias === true}
-                            onClick={() => updateParam('autoAntiAlias', !params.autoAntiAlias)}
-                            className={`inline-flex h-5 w-9 items-center rounded-full border transition-colors ${params.autoAntiAlias ? 'bg-sky-500/70 border-sky-400/40' : 'bg-slate-700 border-slate-600'}`}
+                            onClick={onDownloadPng}
+                            className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 text-xs flex items-center justify-center gap-2 transition-colors"
                         >
-                            <span
-                                className={`ml-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${params.autoAntiAlias ? 'translate-x-4' : 'translate-x-0'}`}
-                            />
+                            <FileImage className="w-3.5 h-3.5" />
+                            存为 PNG
+                        </button>
+                        <button
+                            onClick={onUploadClick}
+                            className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 text-xs flex items-center justify-center gap-2 transition-colors"
+                        >
+                            <Upload className="w-3.5 h-3.5" />
+                            换一张
                         </button>
                     </div>
                 </div>
             </div>
-
-            {/* Footer Actions */}
-            <div className="p-5 bg-slate-900 border-t border-slate-800 space-y-3 z-10">
-                <button
-                    onClick={onDownloadSvg}
-                    className="w-full py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white rounded-xl shadow-lg shadow-purple-900/20 font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
-                >
-                    <Download className="w-4 h-4" />
-                    导出 SVG 矢量图
-                </button>
-
-                <div className="flex gap-2">
-                    <button
-                        onClick={onDownloadPng}
-                        className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 text-xs flex items-center justify-center gap-2 transition-colors"
-                    >
-                        <FileImage className="w-3.5 h-3.5" />
-                        存为 PNG
-                    </button>
-                    <button
-                        onClick={onUploadClick}
-                        className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 text-xs flex items-center justify-center gap-2 transition-colors"
-                    >
-                        <Upload className="w-3.5 h-3.5" />
-                        换一张
-                    </button>
-                </div>
-            </div>
-        </div>
         );
     };
 
