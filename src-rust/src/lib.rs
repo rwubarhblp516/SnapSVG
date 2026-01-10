@@ -259,6 +259,9 @@ pub fn trace_rgba_parallel(
         height: h,
     };
     
+    // 辅助函数：角度转弧度
+    let to_rad = |deg: f64| deg * std::f64::consts::PI / 180.0;
+    
     // 第一阶段：层次聚类 (单线程，这部分难以并行化)
     let runner = Runner::new(
         RunnerConfig {
@@ -267,8 +270,8 @@ pub fn trace_rgba_parallel(
             batch_size: 25600,
             good_min_area: cfg.filter_speckle,
             good_max_area: w * h,
-            // 注意：is_same_color_a 必须小于 8
-            is_same_color_a: cfg.color_precision.min(7),
+            // 修正：is_same_color_a 是要忽略的位数，而 color_precision 是要保留的位数
+            is_same_color_a: (8 - cfg.color_precision) as i32,
             is_same_color_b: 1,
             deepen_diff: cfg.layer_difference,
             hollow_neighbours: 1,
@@ -292,12 +295,12 @@ pub fn trace_rgba_parallel(
             let cluster = view.get_cluster(cluster_index);
             let paths = cluster.to_compound_path(
                 &view,
-                false,  // hole
+                false,  // hole (Stacked mode = false)
                 cfg.mode,
-                cfg.corner_threshold as f64,
+                to_rad(cfg.corner_threshold as f64), // 修正：需要传入弧度
                 cfg.length_threshold,
                 cfg.max_iterations,
-                cfg.splice_threshold as f64,
+                to_rad(cfg.splice_threshold as f64), // 修正：需要传入弧度
             );
             
             let color = cluster.residue_color();
