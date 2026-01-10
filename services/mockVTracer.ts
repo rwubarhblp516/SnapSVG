@@ -1,5 +1,11 @@
 import { TracerParams, VectorPath, PaletteItem, TracerResult, ThreadStatus } from '../types';
 import { workerPool, ProgressCallback } from './workerPool';
+import { taskScheduler, TaskPriority } from './taskScheduler';
+
+// 导出调度器控制函数
+export const getSchedulerStatus = () => taskScheduler.getStatus();
+export const cancelAllTasks = () => taskScheduler.cancelAll();
+export const updateSchedulerOptions = taskScheduler.updateOptions.bind(taskScheduler);
 
 /**
  * ADVANCED VECTOR TRACER (WORKER PROXY)
@@ -851,4 +857,68 @@ export const traceImage = async (originalImageData: ImageData, params: TracerPar
     } finally {
         inFlight.delete(traceKey);
     }
+};
+
+// --- 带智能调度的 Trace 函数 ---
+// 使用场景：用户快速拖动滑块时，自动去抖动并取消旧任务
+let _imageIdCounter = 0;
+const _imageIdMap = new WeakMap<ImageData, string>();
+
+const getImageId = (imageData: ImageData): string => {
+    let id = _imageIdMap.get(imageData);
+    if (!id) {
+        id = `img-${++_imageIdCounter}`;
+        _imageIdMap.set(imageData, id);
+    }
+    return id;
+};
+
+/**
+ * 带智能调度的图像矢量化
+ * 
+ * 特性：
+ * - 自动去抖动（默认 150ms）
+ * - 自动取消同一图片的旧任务
+ * - 支持优先级
+ * 
+ * @param originalImageData 原始图像数据
+ * @param params 矢量化参数
+ * @param priority 任务优先级，默认 'normal'
+ * @returns Promise<TracerResult>
+ */
+export const traceImageScheduled = (
+    originalImageData: ImageData,
+    params: TracerParams,
+    priority: TaskPriority = 'normal'
+): Promise<TracerResult> => {
+    const imageId = getImageId(originalImageData);
+
+    return taskScheduler.submitDebounced(
+        imageId,
+        params,
+        () => traceImage(originalImageData, params),
+        priority
+    );
+};
+
+/**
+ * 立即执行的图像矢量化（跳过去抖动）
+ * 
+ * 使用场景：
+ * - 用户确认操作（如点击"应用"按钮）
+ * - 初始加载
+ * - 导出前的最终渲染
+ */
+export const traceImageImmediate = (
+    originalImageData: ImageData,
+    params: TracerParams
+): Promise<TracerResult> => {
+    const imageId = getImageId(originalImageData);
+
+    return taskScheduler.submitImmediate(
+        imageId,
+        params,
+        () => traceImage(originalImageData, params),
+        'high'
+    );
 };
