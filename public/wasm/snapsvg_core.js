@@ -160,18 +160,7 @@ export function initThreadPool(num_threads) {
 }
 
 /**
- * 将图片字节数组转换为 SVG 字符串
- *
- * # 参数
- * - `image_bytes`: 图片的原始字节数据 (PNG/JPEG/WEBP 等格式)
- * - `color_count`: 颜色数量 (2-64)
- * - `path_precision`: 路径精度 (1-100)
- * - `corner_threshold`: 角点阈值 (0-180度)
- * - `filter_speckle`: 噪点过滤阈值 (像素面积)
- * - `color_mode`: 颜色模式 ("color", "binary")
- *
- * # 返回
- * SVG 字符串，失败时返回错误信息
+ * 将图片字节数组转换为 SVG 字符串（单线程版本）
  * @param {Uint8Array} image_bytes
  * @param {number} color_count
  * @param {number} path_precision
@@ -204,7 +193,41 @@ export function trace_image_to_svg(image_bytes, color_count, path_precision, cor
 }
 
 /**
- * 高性能版本：直接接收 RGBA 像素数据
+ * 并行矢量化：使用 Rayon 在曲线拟合阶段并行处理
+ *
+ * 注意：此函数需要线程池已初始化 (initThreadPool)
+ * @param {Uint8Array} rgba_data
+ * @param {number} width
+ * @param {number} height
+ * @param {number} color_count
+ * @param {number} path_precision
+ * @param {number} corner_threshold
+ * @param {number} filter_speckle
+ * @returns {string}
+ */
+export function trace_rgba_parallel(rgba_data, width, height, color_count, path_precision, corner_threshold, filter_speckle) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(rgba_data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.trace_rgba_parallel(ptr0, len0, width, height, color_count, path_precision, corner_threshold, filter_speckle);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * 高性能版本：直接接收 RGBA 像素数据（单线程）
  * @param {Uint8Array} rgba_data
  * @param {number} width
  * @param {number} height

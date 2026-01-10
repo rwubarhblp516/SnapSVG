@@ -14,23 +14,19 @@ export function init(): void;
 export function initThreadPool(num_threads: number): Promise<any>;
 
 /**
- * 将图片字节数组转换为 SVG 字符串
- * 
- * # 参数
- * - `image_bytes`: 图片的原始字节数据 (PNG/JPEG/WEBP 等格式)
- * - `color_count`: 颜色数量 (2-64)
- * - `path_precision`: 路径精度 (1-100)
- * - `corner_threshold`: 角点阈值 (0-180度)
- * - `filter_speckle`: 噪点过滤阈值 (像素面积)
- * - `color_mode`: 颜色模式 ("color", "binary")
- * 
- * # 返回
- * SVG 字符串，失败时返回错误信息
+ * 将图片字节数组转换为 SVG 字符串（单线程版本）
  */
 export function trace_image_to_svg(image_bytes: Uint8Array, color_count: number, path_precision: number, corner_threshold: number, filter_speckle: number, color_mode: string): string;
 
 /**
- * 高性能版本：直接接收 RGBA 像素数据
+ * 并行矢量化：使用 Rayon 在曲线拟合阶段并行处理
+ * 
+ * 注意：此函数需要线程池已初始化 (initThreadPool)
+ */
+export function trace_rgba_parallel(rgba_data: Uint8Array, width: number, height: number, color_count: number, path_precision: number, corner_threshold: number, filter_speckle: number): string;
+
+/**
+ * 高性能版本：直接接收 RGBA 像素数据（单线程）
  */
 export function trace_rgba_to_svg(rgba_data: Uint8Array, width: number, height: number, color_count: number, path_precision: number, corner_threshold: number, filter_speckle: number, color_mode: string): string;
 
@@ -50,6 +46,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
   readonly get_version: () => [number, number];
   readonly trace_image_to_svg: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+  readonly trace_rgba_parallel: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
   readonly trace_rgba_to_svg: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
   readonly init: () => void;
   readonly __wbg_wbg_rayon_poolbuilder_free: (a: number, b: number) => void;

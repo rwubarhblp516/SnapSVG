@@ -2,6 +2,7 @@
 /* eslint-disable */
 export const get_version: () => [number, number];
 export const trace_image_to_svg: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+export const trace_rgba_parallel: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
 export const trace_rgba_to_svg: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
 export const init: () => void;
 export const __wbg_wbg_rayon_poolbuilder_free: (a: number, b: number) => void;

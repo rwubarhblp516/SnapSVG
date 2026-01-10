@@ -547,6 +547,8 @@ dependencies = [
  "console_error_panic_hook",
  "fastrand",
  "image 0.24.9",
+ "rayon",
+ "visioncortex",
  "vtracer",
  "wasm-bindgen",
  "wasm-bindgen-futures",

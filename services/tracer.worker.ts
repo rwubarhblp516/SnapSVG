@@ -235,9 +235,23 @@ self.onmessage = async (e: MessageEvent) => {
             let svgString: string;
             const traceStart = performance.now();
             const pixelCount = (finalWidth || 0) * (finalHeight || 0);
-            console.log(`[WASM Trace] 开始矢量化: ${finalWidth}x${finalHeight} (${(pixelCount / 1000000).toFixed(2)}M 像素), 颜色=${colorCount}, 模式=${colorMode}`);
 
-            if (finalRgbaData && finalWidth && finalHeight) {
+            // 检查是否可以使用并行版本
+            const canUseParallel = _threadPoolInitialized && finalRgbaData && finalWidth && finalHeight && colorMode === 'color';
+
+            if (canUseParallel) {
+                console.log(`[WASM Trace] 🚀 并行矢量化: ${finalWidth}x${finalHeight} (${(pixelCount / 1000000).toFixed(2)}M 像素), 颜色=${colorCount}`);
+                svgString = wasm.trace_rgba_parallel(
+                    finalRgbaData,
+                    finalWidth,
+                    finalHeight,
+                    colorCount,
+                    pathPrecision,
+                    cornerThreshold,
+                    filterSpeckle
+                );
+            } else if (finalRgbaData && finalWidth && finalHeight) {
+                console.log(`[WASM Trace] 开始矢量化: ${finalWidth}x${finalHeight} (${(pixelCount / 1000000).toFixed(2)}M 像素), 颜色=${colorCount}, 模式=${colorMode}`);
                 svgString = wasm.trace_rgba_to_svg(
                     finalRgbaData,
                     finalWidth,
@@ -249,6 +263,7 @@ self.onmessage = async (e: MessageEvent) => {
                     colorMode
                 );
             } else if (buffer) {
+                console.log(`[WASM Trace] 开始矢量化 (from buffer): 颜色=${colorCount}, 模式=${colorMode}`);
                 svgString = wasm.trace_image_to_svg(
                     buffer,
                     colorCount,
@@ -263,7 +278,8 @@ self.onmessage = async (e: MessageEvent) => {
 
             const traceTime = performance.now() - traceStart;
             const throughput = pixelCount > 0 ? (pixelCount / traceTime / 1000).toFixed(1) : 'N/A';
-            console.log(`[WASM Trace] ✅ 完成！耗时 ${traceTime.toFixed(1)}ms, 吞吐量 ${throughput}K 像素/ms`);
+            console.log(`[WASM Trace] ✅ 完成！耗时 ${traceTime.toFixed(1)}ms, 吞吐量 ${throughput}K 像素/ms${canUseParallel ? ' (并行)' : ''}`);
+
 
             // Parse SVG
             const usePaletteMapping = params.usePaletteMapping === true;
