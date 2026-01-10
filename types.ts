@@ -11,6 +11,7 @@ export interface TracerParams {
   colorMode: 'color' | 'grayscale' | 'binary'; // Rendering modes
   autoAntiAlias: boolean; // Morphological smoothing
   backgroundColor?: { r: number; g: number; b: number }; // Target background color
+  useWasm?: boolean; // 使用 WASM 后端 (实验性)
 }
 
 export interface VectorPath {
@@ -21,6 +22,7 @@ export interface VectorPath {
   strokeWidth?: number;
   x: number;
   y: number;
+  scale?: number; // Optional scaling for WASM upscaled paths
 }
 
 export interface PaletteItem {

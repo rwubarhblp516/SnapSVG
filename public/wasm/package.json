@@ -1,0 +1,19 @@
+{
+  "name": "snapsvg-core",
+  "type": "module",
+  "collaborators": [
+    "SnapSVG Team"
+  ],
+  "description": "SnapSVG 核心矢量化引擎 - WASM 版本",
+  "version": "0.1.0",
+  "files": [
+    "snapsvg_core_bg.wasm",
+    "snapsvg_core.js",
+    "snapsvg_core.d.ts"
+  ],
+  "main": "snapsvg_core.js",
+  "types": "snapsvg_core.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
