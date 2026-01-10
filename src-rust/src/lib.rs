@@ -259,9 +259,6 @@ pub fn trace_rgba_parallel(
         height: h,
     };
     
-    // 辅助函数：角度转弧度
-    let to_rad = |deg: f64| deg * std::f64::consts::PI / 180.0;
-    
     // 第一阶段：层次聚类 (单线程，这部分难以并行化)
     let runner = Runner::new(
         RunnerConfig {
@@ -297,10 +294,10 @@ pub fn trace_rgba_parallel(
                 &view,
                 false,  // hole (Stacked mode = false)
                 cfg.mode,
-                to_rad(cfg.corner_threshold as f64), // 修正：需要传入弧度
+                cfg.corner_threshold as f64, // visioncortex 使用角度(Degrees)
                 cfg.length_threshold,
                 cfg.max_iterations,
-                to_rad(cfg.splice_threshold as f64), // 修正：需要传入弧度
+                cfg.splice_threshold as f64, // visioncortex 使用角度(Degrees)
             );
             
             let color = cluster.residue_color();
