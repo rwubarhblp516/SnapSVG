@@ -76,7 +76,7 @@ fn build_config(
     
     TracerConfig {
         filter_speckle: filter_speckle as usize,
-        color_precision: 8,
+        color_precision: 6, // 降低精度到 6 (忽略低2位)，大幅减少聚类数，防止 OOM 和提高性能
         layer_difference: layer_diff.max(4).min(16),
         corner_threshold: corner_threshold as i32,
         length_threshold: 4.0,
