@@ -12,6 +12,9 @@ type PreprocessCacheEntry = { data: ImageData; cachedAt: number };
 const _imageStore = new Map<string, StoredImage>();
 const _preprocessCache = new Map<string, Map<string, PreprocessCacheEntry>>();
 const PREPROCESS_CACHE_LIMIT = 4;
+let _threadPoolInitPromise: Promise<void> | null = null;
+let _threadPoolInitialized = false;
+let _threadPoolSkipped = false;
 
 const clearImageStore = () => {
     _imageStore.forEach(entry => entry.bitmap.close());
@@ -74,6 +77,37 @@ const buildImageDataFromBitmap = (entry: StoredImage, scale: number, effectiveBl
     return ctx.getImageData(0, 0, targetWidth, targetHeight);
 };
 
+const maybeInitThreadPool = async (module: any) => {
+    if (_threadPoolInitialized) return;
+    if (_threadPoolInitPromise) {
+        await _threadPoolInitPromise;
+        return;
+    }
+    if (!module?.initThreadPool) return;
+    if (!self.crossOriginIsolated) {
+        if (!_threadPoolSkipped) {
+            console.warn('Worker: crossOriginIsolated 未启用，无法初始化 WASM 线程池');
+            _threadPoolSkipped = true;
+        }
+        return;
+    }
+    const hardwareThreads = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 0;
+    const threadCount = Math.max(1, Math.min(8, (hardwareThreads || 4) - 1));
+    if (threadCount <= 1) {
+        _threadPoolInitialized = true;
+        return;
+    }
+    _threadPoolInitPromise = module.initThreadPool(threadCount)
+        .then(() => {
+            _threadPoolInitialized = true;
+        })
+        .catch((error: unknown) => {
+            console.warn('Worker: 线程池初始化失败，将回退单线程', error);
+            _threadPoolInitPromise = null;
+        });
+    await _threadPoolInitPromise;
+};
+
 const loadWasmInWorker = async () => {
     if (wasmInstance) return wasmInstance;
 
@@ -89,6 +123,7 @@ const loadWasmInWorker = async () => {
 
         // Fix for "deprecated parameters" warning: pass object with module_or_path
         await module.default({ module_or_path: `${baseUrl}/wasm/snapsvg_core_bg.wasm` });
+        await maybeInitThreadPool(module);
 
         wasmInstance = module;
         return wasmInstance;
