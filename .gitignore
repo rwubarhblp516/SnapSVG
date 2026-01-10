@@ -1,1 +1,12 @@
-*
+node_modules
+dist
+.vscode
+src-rust/target
+
+# WASM 构建输出 (由 wasm-pack 生成)
+public/wasm/*.wasm
+public/wasm/*.js
+public/wasm/*.d.ts
+public/wasm/package.json
+# 保留修复后的 workerHelpers.js（通过 build:wasm 脚本生成）
+!public/wasm/snippets/**/workerHelpers.js

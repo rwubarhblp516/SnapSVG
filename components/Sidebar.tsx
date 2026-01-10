@@ -7,7 +7,7 @@ import {
     Bot, Undo2, Redo2, Wand, Info
 } from 'lucide-react';
 import { Slider } from './Slider';
-import { TracerParams, PresetName, PaletteItem } from '../types';
+import { TracerParams, PresetName, PaletteItem, ThreadStatus } from '../types';
 
 interface SidebarProps {
     params: TracerParams;
@@ -22,6 +22,7 @@ interface SidebarProps {
     onAiSplit: () => void;
     aiProcessing: boolean;
     detectedImageType?: string | null;
+    threadStatus?: ThreadStatus;
     // History Props
     onUndo: () => void;
     onRedo: () => void;
@@ -29,6 +30,7 @@ interface SidebarProps {
     canRedo: boolean;
     // Palette
     palette: PaletteItem[];
+    originalPalette?: PaletteItem[];
     // API Key Props (已废弃，保留接口兼容但隐藏)
     apiKey: string;
     setApiKey: (key: string) => void;
@@ -128,6 +130,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     onAiSplit,
     aiProcessing,
     detectedImageType,
+    threadStatus,
     onUndo,
     onRedo,
     canUndo,
@@ -161,6 +164,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const clearBackgroundColor = (e: React.MouseEvent) => {
         e.stopPropagation();
         setParams(prev => ({ ...prev, backgroundColor: undefined }));
+    };
+
+    const getThreadStatusInfo = () => {
+        if (!threadStatus || threadStatus.state === 'unknown') {
+            return { text: 'WASM 线程：等待初始化', className: 'text-slate-500' };
+        }
+        if (threadStatus.state === 'enabled') {
+            const count = threadStatus.threads && threadStatus.threads > 0 ? `${threadStatus.threads} 线程` : '已启用';
+            return { text: `WASM 线程：${count}`, className: 'text-emerald-400' };
+        }
+        if (threadStatus.state === 'failed') {
+            return { text: 'WASM 线程：初始化失败', className: 'text-amber-400' };
+        }
+        const reasonMap: Record<string, string> = {
+            'no-init': '未启用线程构建',
+            'not-isolated': '缺少 COOP/COEP',
+            'single-thread': '仅 1 线程',
+            'init-failed': '初始化失败'
+        };
+        const reason = threadStatus.reason ? reasonMap[threadStatus.reason] : '';
+        const suffix = reason ? `（${reason}）` : '';
+        return { text: `WASM 线程：未启用${suffix}`, className: 'text-slate-400' };
     };
 
     // --- Render Functions ---
@@ -199,6 +224,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         setIsPickingColor: (v: boolean) => void;
         onAiSplit: () => void;
         aiProcessing: boolean;
+        detectedImageType?: string | null;
+        threadStatus?: ThreadStatus;
         onUndo: () => void;
         onRedo: () => void;
         canUndo: boolean;
@@ -252,13 +279,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
         );
     };
 
-    const renderControls = () => (
-        <div className="flex flex-col h-full">
+    const renderControls = () => {
+        const threadStatusInfo = getThreadStatusInfo();
+        return (
+            <div className="flex flex-col h-full">
             {/* Top: Preset Selector */}
             <div className="p-5 border-b border-slate-800 space-y-4 bg-slate-900/50">
                 <div className="flex items-center justify-between">
                     <label className="text-xs font-bold uppercase tracking-wider text-slate-500">预设场景 (Scene)</label>
                     {processing && <span className="text-[10px] text-purple-400 font-mono animate-pulse">PROCESSING...</span>}
+                </div>
+                <div className={`text-[10px] font-mono ${threadStatusInfo.className}`}>
+                    {threadStatusInfo.text}
                 </div>
 
                 <div className="relative">
@@ -488,7 +520,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
             </div>
         </div>
-    );
+        );
+    };
 
     return (
         <div className="w-80 h-full bg-slate-900 border-r border-slate-800 flex flex-col shrink-0 relative z-30">

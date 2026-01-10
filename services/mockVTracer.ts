@@ -1,4 +1,4 @@
-import { TracerParams, VectorPath, PaletteItem, TracerResult } from '../types';
+import { TracerParams, VectorPath, PaletteItem, TracerResult, ThreadStatus } from '../types';
 
 /**
  * ADVANCED VECTOR TRACER (WORKER PROXY)
@@ -18,6 +18,23 @@ type WorkerImageInfo = { id: string; token: number };
 type WorkerImageInit = { token: number; promise: Promise<string> };
 const _workerImageInfo = new WeakMap<ImageData, WorkerImageInfo>();
 const _workerImageInit = new WeakMap<ImageData, WorkerImageInit>();
+let _threadStatus: ThreadStatus = { state: 'unknown' };
+const _threadStatusListeners = new Set<(status: ThreadStatus) => void>();
+
+const notifyThreadStatus = (status: ThreadStatus) => {
+    _threadStatus = { ...status };
+    _threadStatusListeners.forEach(listener => listener(_threadStatus));
+};
+
+export const getThreadStatus = () => _threadStatus;
+
+export const onThreadStatusChange = (listener: (status: ThreadStatus) => void) => {
+    _threadStatusListeners.add(listener);
+    listener(_threadStatus);
+    return () => {
+        _threadStatusListeners.delete(listener);
+    };
+};
 
 const getWorker = (shouldRestart: boolean = false) => {
     if (shouldRestart && _worker) {
@@ -31,10 +48,14 @@ const getWorker = (shouldRestart: boolean = false) => {
     }
 
     if (!_worker) {
-        _worker = new TracerWorker();
+        _worker = new TracerWorker({ type: 'module' });
         _workerToken += 1;
         _worker!.onmessage = (e) => {
-            const { id, type, result, error } = e.data;
+            const { id, type, result, error, status } = e.data;
+            if (type === 'thread-status') {
+                if (status) notifyThreadStatus(status as ThreadStatus);
+                return;
+            }
             _isWorkerBusy = false; // Mark as free
             const callback = _workerCallbacks.get(id);
             if (callback) {

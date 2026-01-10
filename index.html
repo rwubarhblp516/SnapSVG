@@ -5,55 +5,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SnapSVG - 图片转矢量图工具</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            hpp: {
-              dark: '#0f172a', // Main background
-              card: '#1e293b', // Component background
-              border: '#334155',
-              blue: '#3b82f6',
-              purple: '#a855f7',
-              pink: '#ec4899',
-            }
-          },
-          fontFamily: {
-            sans: ['Inter', 'system-ui', 'sans-serif'],
-          }
-        }
-      }
-    }
-  </script>
-  <style>
-    /* Custom scrollbar */
-    ::-webkit-scrollbar {
-      width: 6px;
-      height: 6px;
-    }
-
-    ::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    ::-webkit-scrollbar-thumb {
-      background: #334155;
-      border-radius: 3px;
-    }
-
-    ::-webkit-scrollbar-thumb:hover {
-      background: #475569;
-    }
-
-    .checkerboard-bg {
-      background-color: #0B1121;
-      background-image: linear-gradient(45deg, #151e32 25%, transparent 25%), linear-gradient(-45deg, #151e32 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #151e32 75%), linear-gradient(-45deg, transparent 75%, #151e32 75%);
-      background-size: 20px 20px;
-      background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
-    }
-  </style>
   <script type="importmap">
 {
   "imports": {

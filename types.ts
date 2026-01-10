@@ -48,6 +48,14 @@ export interface ProcessingStats {
   pathCount: number;
 }
 
+export type ThreadStatusState = 'unknown' | 'enabled' | 'disabled' | 'failed';
+
+export interface ThreadStatus {
+  state: ThreadStatusState;
+  threads?: number;
+  reason?: string;
+}
+
 export interface ViewportState {
   scale: number;
   x: number;

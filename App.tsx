@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Canvas } from './components/Canvas';
-import { TracerParams, VectorPath, ProcessingStats, PaletteItem } from './types';
-import { traceImage, extractPalette, autoDetectParams } from './services/mockVTracer';
+import { TracerParams, VectorPath, ProcessingStats, PaletteItem, ThreadStatus } from './types';
+import { traceImage, extractPalette, autoDetectParams, getThreadStatus, onThreadStatusChange } from './services/mockVTracer';
 // Removed aiService imports since we are now fully local
 
 // Type for History Step
@@ -46,6 +46,7 @@ const App: React.FC = () => {
     const [aiProcessing, setAiProcessing] = useState(false);
     const [stats, setStats] = useState<ProcessingStats>({ durationMs: 0, pathCount: 0 });
     const [detectedImageType, setDetectedImageType] = useState<string | null>(null);
+    const [threadStatus, setThreadStatus] = useState<ThreadStatus>(getThreadStatus());
 
     // Color Picker
     const [isPickingColor, setIsPickingColor] = useState(false);
@@ -171,6 +172,13 @@ const App: React.FC = () => {
             window.removeEventListener('drop', handleDrop);
         };
     }, [handlePaste, handleDrop]);
+
+    useEffect(() => {
+        const unsubscribe = onThreadStatusChange((status) => {
+            setThreadStatus(status);
+        });
+        return () => unsubscribe();
+    }, []);
 
     const processFile = (file: File) => {
         setImageFile(file);
@@ -416,6 +424,7 @@ ${pathsString}
                 onAiSplit={handleLocalAutoTune}
                 aiProcessing={aiProcessing}
                 detectedImageType={detectedImageType}
+                threadStatus={threadStatus}
                 // Undo/Redo
                 onUndo={handleUndo}
                 onRedo={handleRedo}

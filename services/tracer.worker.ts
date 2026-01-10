@@ -1,10 +1,5 @@
 import { TracerParams, VectorPath, PaletteItem, TracerResult } from '../types';
 
-// Define the worker interface types locally or import if possible
-// Since importing types in a worker can be tricky depending on build, 
-// we'll try to keep imports minimal or just redefine interfaces if needed.
-// But usually Vite supports it.
-
 // Global WASM State in Worker
 let wasmInstance: any = null;
 type StoredImage = { bitmap: ImageBitmap; width: number; height: number };
@@ -12,9 +7,22 @@ type PreprocessCacheEntry = { data: ImageData; cachedAt: number };
 const _imageStore = new Map<string, StoredImage>();
 const _preprocessCache = new Map<string, Map<string, PreprocessCacheEntry>>();
 const PREPROCESS_CACHE_LIMIT = 4;
+type ThreadStatusState = 'unknown' | 'enabled' | 'disabled' | 'failed';
+type ThreadStatus = { state: ThreadStatusState; threads?: number; reason?: string };
+
 let _threadPoolInitPromise: Promise<void> | null = null;
 let _threadPoolInitialized = false;
 let _threadPoolSkipped = false;
+let _threadStatus: ThreadStatus = { state: 'unknown' };
+
+const reportThreadStatus = (status: ThreadStatus) => {
+    const isSame = _threadStatus.state === status.state
+        && _threadStatus.threads === status.threads
+        && _threadStatus.reason === status.reason;
+    if (isSame) return;
+    _threadStatus = status;
+    self.postMessage({ type: 'thread-status', status });
+};
 
 const clearImageStore = () => {
     _imageStore.forEach(entry => entry.bitmap.close());
@@ -83,26 +91,48 @@ const maybeInitThreadPool = async (module: any) => {
         await _threadPoolInitPromise;
         return;
     }
-    if (!module?.initThreadPool) return;
+    if (!module?.initThreadPool) {
+        reportThreadStatus({ state: 'disabled', reason: 'no-init' });
+        return;
+    }
     if (!self.crossOriginIsolated) {
         if (!_threadPoolSkipped) {
             console.warn('Worker: crossOriginIsolated 未启用，无法初始化 WASM 线程池');
             _threadPoolSkipped = true;
         }
+        reportThreadStatus({ state: 'disabled', reason: 'not-isolated' });
         return;
     }
     const hardwareThreads = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 0;
     const threadCount = Math.max(1, Math.min(8, (hardwareThreads || 4) - 1));
+    console.log(`[WASM 线程池] 硬件线程: ${hardwareThreads}, 计划使用: ${threadCount} 线程`);
     if (threadCount <= 1) {
         _threadPoolInitialized = true;
+        console.log('[WASM 线程池] 单线程模式（线程数不足）');
+        reportThreadStatus({ state: 'disabled', threads: threadCount, reason: 'single-thread' });
         return;
     }
-    _threadPoolInitPromise = module.initThreadPool(threadCount)
+
+    // 创建带超时的 Promise，防止多线程初始化卡死
+    const timeoutMs = 5000;
+    console.log(`[WASM 线程池] 开始初始化 ${threadCount} 个线程...`);
+    const initStart = performance.now();
+    const initPromise = module.initThreadPool(threadCount);
+    const timeoutPromise = new Promise<void>((_, reject) => {
+        setTimeout(() => reject(new Error('Thread pool init timeout')), timeoutMs);
+    });
+
+    _threadPoolInitPromise = Promise.race([initPromise, timeoutPromise])
         .then(() => {
+            const initTime = (performance.now() - initStart).toFixed(1);
             _threadPoolInitialized = true;
+            console.log(`[WASM 线程池] ✅ 初始化成功！${threadCount} 线程就绪，耗时 ${initTime}ms`);
+            reportThreadStatus({ state: 'enabled', threads: threadCount });
         })
         .catch((error: unknown) => {
-            console.warn('Worker: 线程池初始化失败，将回退单线程', error);
+            console.warn('[WASM 线程池] ❌ 初始化失败，回退单线程模式', error);
+            _threadPoolInitialized = true; // 标记为已初始化，防止重试
+            reportThreadStatus({ state: 'failed', reason: 'init-failed' });
             _threadPoolInitPromise = null;
         });
     await _threadPoolInitPromise;
@@ -112,20 +142,36 @@ const loadWasmInWorker = async () => {
     if (wasmInstance) return wasmInstance;
 
     try {
-        // Use absolute path for public assets
-        // Note: In a Worker, self.location.origin is available.
-        const baseUrl = self.location.origin;
+        // 直接使用 fetch 加载 WASM 二进制，完全绕过 JS 模块系统
+        const wasmUrl = "/wasm/snapsvg_core_bg.wasm";
 
-        // We use importScripts or dynamic import. 
-        // Since we are in a module worker (Vite default), dynamic import works.
-        // We directly import the JS glue code.
-        const module = await import(/* @vite-ignore */ `${baseUrl}/wasm/snapsvg_core.js`);
+        // 动态导入 JS 胶水代码
+        // 使用 new Function 完全绕过 Vite 的静态分析
+        const jsUrl = new URL("/wasm/snapsvg_core.js", self.location.origin).href;
+        const dynamicImport = new Function('url', 'return import(url)');
 
-        // Fix for "deprecated parameters" warning: pass object with module_or_path
-        await module.default({ module_or_path: `${baseUrl}/wasm/snapsvg_core_bg.wasm` });
-        await maybeInitThreadPool(module);
+        let module: any;
+        try {
+            module = await dynamicImport(jsUrl);
+        } catch (importError) {
+            console.error("Worker: 动态导入 WASM JS 模块失败", importError);
+            throw new Error(`无法加载 WASM 模块: ${importError}`);
+        }
+
+        // 初始化 WASM 模块 - 使用完整的 URL
+        const fullWasmUrl = new URL(wasmUrl, self.location.origin).href;
+        await module.default({ module_or_path: fullWasmUrl });
+
+        // 尝试初始化线程池（可选，失败不影响基本功能）
+        try {
+            await maybeInitThreadPool(module);
+        } catch (threadError) {
+            console.warn('Worker: 线程池初始化异常，继续使用单线程模式', threadError);
+            reportThreadStatus({ state: 'failed', reason: 'exception' });
+        }
 
         wasmInstance = module;
+        console.log('Worker: WASM 模块加载成功');
         return wasmInstance;
     } catch (e) {
         console.error("Worker: Failed to load WASM", e);
@@ -141,67 +187,61 @@ self.onmessage = async (e: MessageEvent) => {
         return;
     }
 
-    if (type === 'set-image') {
-        if (!imageId || !imageBitmap) {
-            console.error('Worker: set-image 缺少必要数据');
-            return;
-        }
-        const entry = _imageStore.get(imageId);
-        if (entry) entry.bitmap.close();
+    if (type === 'set-image' && imageId && imageBitmap) {
         _imageStore.set(imageId, {
-            bitmap: imageBitmap as ImageBitmap,
-            width: (imageBitmap as ImageBitmap).width,
-            height: (imageBitmap as ImageBitmap).height
+            bitmap: imageBitmap,
+            width: imageBitmap.width,
+            height: imageBitmap.height
         });
-        _preprocessCache.delete(imageId);
         return;
     }
 
     if (type === 'trace') {
         try {
             const wasm = await loadWasmInWorker();
+            let finalRgbaData = rgbaData;
+            let finalWidth = width;
+            let finalHeight = height;
+            let finalBgColorHex = bgColorHex || '#ffffff';
+
+            // 如果提供了 imageId，则在 Worker 内部进行预处理
+            if (imageId && _imageStore.has(imageId)) {
+                const entry = _imageStore.get(imageId)!;
+                const cacheKey = buildPreprocessKey(scale, effectiveBlur || 0, crop);
+                const cached = getCachedPreprocess(imageId, cacheKey);
+
+                if (cached) {
+                    finalRgbaData = new Uint8Array(cached.data.buffer);
+                    finalWidth = cached.width;
+                    finalHeight = cached.height;
+                } else {
+                    const imageData = buildImageDataFromBitmap(entry, scale, effectiveBlur || 0, crop);
+                    finalRgbaData = new Uint8Array(imageData.data.buffer);
+                    finalWidth = imageData.width;
+                    finalHeight = imageData.height;
+                    setCachedPreprocess(imageId, cacheKey, imageData);
+                }
+
+                // 为了性能，如果使用了 crop，背景色检测逻辑可能需要调整
+                // 这里暂时沿用传入的 bgColorHex 或默认值
+            }
 
             const colorCount = Math.max(2, Math.min(64, params.colors));
-            const precisionMax = params.autoAntiAlias ? 5 : 8;
-            const pathPrecision = Math.max(1, Math.round((params.paths / 100) * precisionMax));
-            const cornerScale = params.autoAntiAlias ? 0.85 : 1;
-            const cornerThreshold = Math.round((params.corners / 100) * 180 * cornerScale);
+            const pathPrecision = Math.max(0, Math.min(100, Math.round(params.paths)));
+            const cornerThreshold = Math.round((params.corners / 100) * 180);
             const filterSpeckle = Math.round(params.noise);
             const colorMode = params.colorMode === 'binary' ? 'binary' : 'color';
 
             let svgString: string;
+            const traceStart = performance.now();
+            const pixelCount = (finalWidth || 0) * (finalHeight || 0);
+            console.log(`[WASM Trace] 开始矢量化: ${finalWidth}x${finalHeight} (${(pixelCount / 1000000).toFixed(2)}M 像素), 颜色=${colorCount}, 模式=${colorMode}`);
 
-            // 优先使用 RGBA 直接传输（高性能模式）
-            if (rgbaData && width && height) {
-                // 使用新的高性能 API - 跳过 PNG 编解码
+            if (finalRgbaData && finalWidth && finalHeight) {
                 svgString = wasm.trace_rgba_to_svg(
-                    rgbaData,
-                    width,
-                    height,
-                    colorCount,
-                    pathPrecision,
-                    cornerThreshold,
-                    filterSpeckle,
-                    colorMode
-                );
-            } else if (imageId) {
-                const entry = _imageStore.get(imageId);
-                if (!entry) {
-                    throw new Error('Worker: 未找到图像缓存');
-                }
-                const safeScale = typeof scale === 'number' ? scale : 1;
-                const blurAmount = typeof effectiveBlur === 'number' ? effectiveBlur : 0;
-                const preprocessKey = buildPreprocessKey(safeScale, blurAmount, crop);
-                const cachedData = getCachedPreprocess(imageId, preprocessKey);
-                const imageData = cachedData || buildImageDataFromBitmap(entry, safeScale, blurAmount, crop);
-                if (!cachedData) {
-                    setCachedPreprocess(imageId, preprocessKey, imageData);
-                }
-                const rgbaFromBitmap = new Uint8Array(imageData.data.buffer);
-                svgString = wasm.trace_rgba_to_svg(
-                    rgbaFromBitmap,
-                    imageData.width,
-                    imageData.height,
+                    finalRgbaData,
+                    finalWidth,
+                    finalHeight,
                     colorCount,
                     pathPrecision,
                     cornerThreshold,
@@ -209,7 +249,6 @@ self.onmessage = async (e: MessageEvent) => {
                     colorMode
                 );
             } else if (buffer) {
-                // 回退到 PNG 模式（兼容旧调用）
                 svgString = wasm.trace_image_to_svg(
                     buffer,
                     colorCount,
@@ -222,12 +261,17 @@ self.onmessage = async (e: MessageEvent) => {
                 throw new Error('No image data provided');
             }
 
+            const traceTime = performance.now() - traceStart;
+            const throughput = pixelCount > 0 ? (pixelCount / traceTime / 1000).toFixed(1) : 'N/A';
+            console.log(`[WASM Trace] ✅ 完成！耗时 ${traceTime.toFixed(1)}ms, 吞吐量 ${throughput}K 像素/ms`);
+
             // Parse SVG
             const usePaletteMapping = params.usePaletteMapping === true;
             const targetPalette = usePaletteMapping && params.palette && params.palette.length > 0
                 ? params.palette
                 : undefined;
-            const result = parseSvg(svgString, scale, params.ignoreWhite, params.smartBackground, bgColorHex || '#ffffff', colorCount, targetPalette);
+
+            const result = parseSvg(svgString, scale, params.ignoreWhite, params.smartBackground, finalBgColorHex, colorCount, targetPalette);
 
             self.postMessage({ id, type: 'success', result });
 
@@ -243,116 +287,66 @@ function parseSvg(svgString: string, scale: number, ignoreWhite: boolean, smartB
     const colorCounts = new Map<string, number>();
 
     const pathTagRegex = /<path\s+([^>]+)\/?>/g;
-    const fillRegex = /fill="([^"]*)"/;
-    const dRegex = /d="([^"]*)"/;
-    const transformRegex = /transform="translate\(([^,]+),([^)]+)\)"/;
     let pathMatch;
     let pathId = 0;
 
-    const bgColorHexLower = bgColorHex.toLowerCase();
-
     const isWhiteOrBg = (hex: string) => {
         if (!ignoreWhite) return false;
-        const lower = hex.toLowerCase();
-        if (lower === '#ffffff') return true;
-        if (smartBackground && lower === bgColorHexLower) return true;
+        if (hex.toLowerCase() === '#ffffff') return true;
+        if (smartBackground && hex.toLowerCase() === bgColorHex.toLowerCase()) return true;
         return false;
     };
 
-    // Helper for color distance
     const hexToRgb = (hex: string) => {
-        // Handle undefined/null
         if (!hex) return null;
-
         let c = hex.trim();
         if (c.startsWith('#')) c = c.slice(1);
-
-        // Handle #RGB shorthand
         if (c.length === 3) {
             c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2];
         }
-
-        // Allow valid RRGGBB
         if (c.length !== 6) return null;
-
         const r = parseInt(c.slice(0, 2), 16);
         const g = parseInt(c.slice(2, 4), 16);
         const b = parseInt(c.slice(4, 6), 16);
-
         if (isNaN(r) || isNaN(g) || isNaN(b)) return null;
-
         return { r, g, b };
-    };
-
-    const rgbCache = new Map<string, { r: number, g: number, b: number } | null>();
-    const getRgb = (hex: string) => {
-        const key = hex.toLowerCase();
-        if (rgbCache.has(key)) return rgbCache.get(key) as { r: number, g: number, b: number } | null;
-        const rgb = hexToRgb(hex);
-        rgbCache.set(key, rgb);
-        return rgb;
     };
 
     const getDist = (c1: { r: number, g: number, b: number }, c2: { r: number, g: number, b: number }) => {
         return (c1.r - c2.r) ** 2 + (c1.g - c2.g) ** 2 + (c1.b - c2.b) ** 2;
     };
 
-    // Pre-calculate target RGBs if palette provided
-    // Filter out invalid RGBs
     const targetRgbPalette = targetPalette
-        ? targetPalette.map(hex => ({ hex, rgb: getRgb(hex) })).filter(item => item.rgb !== null) as { hex: string, rgb: { r: number, g: number, b: number } }[]
+        ? targetPalette.map(hex => ({ hex, rgb: hexToRgb(hex) })).filter(item => item.rgb !== null) as { hex: string, rgb: { r: number, g: number, b: number } }[]
         : null;
-    const nearestPaletteCache = targetRgbPalette ? new Map<string, string>() : null;
-
-    if (targetRgbPalette) {
-        console.log(`[Worker] Smart Filter Active. Target Palette Size: ${targetRgbPalette.length} (Requested: ${maxColors})`);
-    } else {
-        console.log(`[Worker] Standard Mode (No Target Palette)`);
-    }
 
     while ((pathMatch = pathTagRegex.exec(svgString)) !== null) {
         const attrs = pathMatch[1];
-        const fillMatch = fillRegex.exec(attrs);
-        const dMatch = dRegex.exec(attrs);
-        const transformMatch = transformRegex.exec(attrs);
+        const fillMatch = attrs.match(/fill="([^"]*)"/);
+        const dMatch = attrs.match(/d="([^"]*)"/);
+        const transformMatch = attrs.match(/transform="translate\(([^,]+),([^)]+)\)"/);
 
         if (fillMatch && dMatch) {
             let fill = fillMatch[1];
             const d = dMatch[1];
-
             if (isWhiteOrBg(fill)) continue;
 
-            // --- STRICT PALETTE REMAPPING (SMART FILTER) ---
-            // If targetPalette is provided, we remap EVERY PATH immediately to the nearest target color.
-            // This prevents "accumulation of noise" before counting.
             if (targetRgbPalette) {
-                const cacheKey = fill.toLowerCase();
-                if (nearestPaletteCache!.has(cacheKey)) {
-                    fill = nearestPaletteCache!.get(cacheKey) as string;
-                } else {
-                    const srcRgb = getRgb(fill);
-                    let nearestHex = fill;
-
-                    if (srcRgb) {
-                        let minDist = Infinity;
-                        nearestHex = targetRgbPalette[0].hex;
-                        for (const target of targetRgbPalette) {
-                            const dist = getDist(srcRgb, target.rgb);
-                            if (dist < minDist) {
-                                minDist = dist;
-                                nearestHex = target.hex;
-                            }
-                        }
+                const srcRgb = hexToRgb(fill);
+                let minDist = Infinity;
+                let nearestHex = targetRgbPalette[0].hex;
+                for (const target of targetRgbPalette) {
+                    const dist = getDist(srcRgb!, target.rgb);
+                    if (dist < minDist) {
+                        minDist = dist;
+                        nearestHex = target.hex;
                     }
-
-                    nearestPaletteCache!.set(cacheKey, nearestHex);
-                    fill = nearestHex;
                 }
+                fill = nearestHex;
             }
 
             let x = 0;
             let y = 0;
-
             if (transformMatch) {
                 x = parseFloat(transformMatch[1]);
                 y = parseFloat(transformMatch[2]);
@@ -374,44 +368,27 @@ function parseSvg(svgString: string, scale: number, ignoreWhite: boolean, smartB
         }
     }
 
-    // --- FALLBACK: Heuristic Quantization ---
-    // Only run this if we didn't use a strict palette, OR if somehow our remapping
-    // still resulted in too many colors (unlikely given palette size is enforced by caller).
-    // But good as a safety net.
     if (!targetRgbPalette && colorCounts.size > maxColors) {
-        // 1. Sort colors by frequency (keep top N)
         const sortedColors = Array.from(colorCounts.entries()).sort((a, b) => b[1] - a[1]);
         const keepColors = new Set(sortedColors.slice(0, maxColors).map(c => c[0]));
-
-        // 2. Build Map for remapping
         const colorMap = new Map<string, string>();
+        const targetPaletteLocal = Array.from(keepColors).map(hex => ({ hex, rgb: hexToRgb(hex) }));
 
-        // Pre-calculate RGB for target palette
-        const targetPaletteLocal = Array.from(keepColors)
-            .map(hex => ({ hex, rgb: getRgb(hex) }))
-            .filter(item => item.rgb !== null) as { hex: string, rgb: { r: number, g: number, b: number } }[];
-
-        // Map every existing color to nearest target
         for (const [hex] of colorCounts) {
             if (keepColors.has(hex)) {
                 colorMap.set(hex, hex);
                 continue;
             }
-            const srcRgb = getRgb(hex);
-            if (!srcRgb || targetPaletteLocal.length === 0) {
-                colorMap.set(hex, hex);
-                continue;
-            }
+            const srcRgb = hexToRgb(hex);
             let minDist = Infinity;
-            let nearestHex = targetPaletteLocal[0].hex;
+            let nearestHex = targetPaletteLocal[0].hex!;
             for (const target of targetPaletteLocal) {
-                const d = getDist(srcRgb, target.rgb);
-                if (d < minDist) { minDist = d; nearestHex = target.hex; }
+                const d = getDist(srcRgb!, target.rgb!);
+                if (d < minDist) { minDist = d; nearestHex = target.hex!; }
             }
             colorMap.set(hex, nearestHex);
         }
 
-        // 3. Update Paths & Re-count
         colorCounts.clear();
         paths.forEach(p => {
             const newFill = colorMap.get(p.fill) || p.fill;
@@ -423,10 +400,8 @@ function parseSvg(svgString: string, scale: number, ignoreWhite: boolean, smartB
 
     const palette: PaletteItem[] = [];
     for (const [hex, count] of colorCounts.entries()) {
-        const r = parseInt(hex.slice(1, 3), 16) || 0;
-        const g = parseInt(hex.slice(3, 5), 16) || 0;
-        const b = parseInt(hex.slice(5, 7), 16) || 0;
-        palette.push({ hex, r, g, b, count, ratio: count / (paths.length || 1) });
+        const rgb = hexToRgb(hex) || { r: 0, g: 0, b: 0 };
+        palette.push({ hex, ...rgb, count, ratio: count / (paths.length || 1) });
     }
     palette.sort((a, b) => b.count - a.count);
 

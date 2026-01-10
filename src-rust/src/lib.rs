@@ -6,11 +6,22 @@ use wasm_bindgen::prelude::*;
 use vtracer::{Config, ColorMode, Hierarchical, ColorImage};
 use fastrand;
 
+#[cfg(feature = "wasm-threads")]
+pub use wasm_bindgen_rayon::init_thread_pool;
+
+#[cfg(feature = "wasm-threads")]
+thread_local! {
+    static TLS_FORCE: std::cell::Cell<u32> = std::cell::Cell::new(0);
+}
+
 /// 初始化 panic hook，便于调试
 #[wasm_bindgen(start)]
 pub fn init() {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
+    
+    #[cfg(feature = "wasm-threads")]
+    TLS_FORCE.with(|f| f.set(1));
 }
 
 /// 初始化 WASM 线程池（需要启用 crossOriginIsolated）
