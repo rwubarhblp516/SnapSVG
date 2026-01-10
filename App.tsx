@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Canvas } from './components/Canvas';
 import { TracerParams, VectorPath, ProcessingStats, PaletteItem } from './types';
-import { traceImage, estimateColors, autoDetectParams } from './services/mockVTracer';
+import { traceImage, extractPalette, autoDetectParams } from './services/mockVTracer';
 // Removed aiService imports since we are now fully local
 
 // Type for History Step
@@ -10,6 +10,8 @@ interface HistoryStep {
     paths: VectorPath[];
     params: TracerParams;
     palette: PaletteItem[];
+    // We don't need originalPalette in history per se, as it's static per image, but maybe if we support multiple images later?
+    // For now, keep it simple.
 }
 
 const App: React.FC = () => {
@@ -18,13 +20,14 @@ const App: React.FC = () => {
         colors: 32,
         paths: 85,
         corners: 75,
-        noise: 5,
+        noise: 20,
         blur: 0,
         sampling: 1, // Defaulting to 1x as requested by user
         ignoreWhite: true,
         smartBackground: true,
         colorMode: 'color',
         autoAntiAlias: true,
+        usePaletteMapping: false,
         backgroundColor: undefined
     });
 
@@ -36,10 +39,13 @@ const App: React.FC = () => {
     const [svgPaths, setSvgPaths] = useState<VectorPath[]>([]);
     // NEW: Palette State
     const [palette, setPalette] = useState<PaletteItem[]>([]);
+    // NEW: Original Palette State
+    const [originalPalette, setOriginalPalette] = useState<PaletteItem[]>([]);
 
     const [processing, setProcessing] = useState(false);
     const [aiProcessing, setAiProcessing] = useState(false);
     const [stats, setStats] = useState<ProcessingStats>({ durationMs: 0, pathCount: 0 });
+    const [detectedImageType, setDetectedImageType] = useState<string | null>(null);
 
     // Color Picker
     const [isPickingColor, setIsPickingColor] = useState(false);
@@ -181,14 +187,33 @@ const App: React.FC = () => {
                 ctx.drawImage(img, 0, 0);
                 const data = ctx.getImageData(0, 0, img.width, img.height);
                 setImageData(data);
-                const estimated = estimateColors(data.data, img.width * img.height);
+
+                // Extract Palette and Color Estimate
+                const { colorCount, palette } = extractPalette(data.data, img.width * img.height);
+                const suggestedParams = autoDetectParams(data) as any;
+                const detectedType = suggestedParams._detectedType;
+                const detectedColors = suggestedParams._detectedColors;
+                delete suggestedParams._detectedType;
+                delete suggestedParams._detectedColors;
+
                 // Reset history on new file
-                const initialParams = { ...params, colors: estimated, backgroundColor: undefined };
+                const initialParams = {
+                    ...params,
+                    ...suggestedParams,
+                    colors: suggestedParams.colors ?? colorCount,
+                    backgroundColor: undefined
+                };
                 setParams(initialParams);
                 setHistory([]);
                 setHistoryIndex(-1);
                 setSvgPaths([]);
                 setPalette([]);
+                setOriginalPalette(palette); // Set Original Palette
+
+                if (detectedType) {
+                    setDetectedImageType(`${detectedType} (${detectedColors} 色)`);
+                    setTimeout(() => setDetectedImageType(null), 5000);
+                }
             }
             setImageUrl(url);
         };
@@ -232,12 +257,19 @@ const App: React.FC = () => {
         setTimeout(() => {
             try {
                 // Analyze locally
-                const suggestedParams = autoDetectParams(imageData);
+                const suggestedParams = autoDetectParams(imageData) as any;
+
+                // 提取检测信息
+                const detectedType = suggestedParams._detectedType;
+                const detectedColors = suggestedParams._detectedColors;
+
+                // 移除内部字段
+                delete suggestedParams._detectedType;
+                delete suggestedParams._detectedColors;
 
                 setParams(prev => ({
                     ...prev,
                     ...suggestedParams,
-                    // Ensure defaults preserved if missing
                     colors: suggestedParams.colors ?? prev.colors,
                     paths: suggestedParams.paths ?? prev.paths,
                     corners: suggestedParams.corners ?? prev.corners,
@@ -246,6 +278,13 @@ const App: React.FC = () => {
                     colorMode: (suggestedParams.colorMode as any) ?? prev.colorMode,
                     sampling: suggestedParams.sampling ?? prev.sampling
                 }));
+
+                // 显示检测结果
+                if (detectedType) {
+                    setDetectedImageType(`${detectedType} (${detectedColors} 色)`);
+                    // 3秒后清除提示
+                    setTimeout(() => setDetectedImageType(null), 5000);
+                }
             } catch (err) {
                 console.error(err);
             } finally {
@@ -264,7 +303,13 @@ const App: React.FC = () => {
             setProcessing(true);
             const start = performance.now();
             try {
-                const result = await traceImage(imageData, params);
+                // Optional palette mapping (disabled by default for higher fidelity).
+                const targetPalette = params.usePaletteMapping && originalPalette.length > 0
+                    ? originalPalette.slice(0, params.colors).map(p => p.hex)
+                    : undefined;
+
+                const result = await traceImage(imageData, { ...params, palette: targetPalette });
+
                 setSvgPaths(result.paths);
                 setPalette(result.palette);
                 setStats({
@@ -280,7 +325,7 @@ const App: React.FC = () => {
             }
         }, 400);
         return () => clearTimeout(timer);
-    }, [params, imageData, addToHistory]);
+    }, [params, imageData, addToHistory, originalPalette]);
 
     // --- Downloads ---
     const downloadSvg = () => {
@@ -370,6 +415,7 @@ ${pathsString}
                 setIsPickingColor={setIsPickingColor}
                 onAiSplit={handleLocalAutoTune}
                 aiProcessing={aiProcessing}
+                detectedImageType={detectedImageType}
                 // Undo/Redo
                 onUndo={handleUndo}
                 onRedo={handleRedo}
@@ -377,6 +423,7 @@ ${pathsString}
                 canRedo={historyIndex < history.length - 1}
                 // Palette
                 palette={palette}
+                originalPalette={originalPalette}
                 // API Key (Hidden now)
                 apiKey={apiKey}
                 setApiKey={setApiKey}

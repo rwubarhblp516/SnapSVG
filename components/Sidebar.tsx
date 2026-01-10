@@ -21,6 +21,7 @@ interface SidebarProps {
     setIsPickingColor: (v: boolean) => void;
     onAiSplit: () => void;
     aiProcessing: boolean;
+    detectedImageType?: string | null;
     // History Props
     onUndo: () => void;
     onRedo: () => void;
@@ -34,12 +35,84 @@ interface SidebarProps {
 }
 
 const PRESETS: Record<PresetName, Partial<TracerParams> & { label: string, icon: any }> = {
-    'default': { label: '默认设置 (Default)', icon: Sparkles, colors: 32, paths: 85, corners: 75, noise: 5, blur: 0, sampling: 2, colorMode: 'color', autoAntiAlias: true },
-    'clipart': { label: '剪贴画/插图 (Clipart)', icon: Palette, colors: 16, paths: 80, corners: 60, noise: 5, blur: 0, sampling: 2, colorMode: 'color', autoAntiAlias: true },
-    'photo': { label: '复杂照片 (Photo)', icon: ImageIcon, colors: 64, paths: 95, corners: 85, noise: 2, blur: 0, sampling: 2, colorMode: 'color', autoAntiAlias: false },
-    'sketch': { label: '灰度素描 (Sketch)', icon: Wand2, colors: 8, paths: 60, corners: 40, noise: 20, blur: 1, sampling: 2, colorMode: 'grayscale', autoAntiAlias: true },
-    'lineart': { label: '黑白线稿 (Line Art)', icon: Contrast, colors: 2, paths: 90, corners: 90, noise: 50, blur: 0, sampling: 4, colorMode: 'binary', autoAntiAlias: true },
-    'poster': { label: '海报艺术 (Poster)', icon: Layers, colors: 6, paths: 70, corners: 70, noise: 10, blur: 1, sampling: 1, colorMode: 'color', autoAntiAlias: true },
+    // vtracer 参数映射说明:
+    // colors (2-64) → layer_difference: 64色=4(不合并), 2色=64(强合并)
+    // paths (0-100) → path_precision: 100%=8, 0%=1
+    // corners (0-100) → corner_threshold: 100=180°(保留尖角), 0=0°(圆滑)
+    // noise (0-100) → filter_speckle: 过滤小于该面积(px²)的路径
+
+    'default': {
+        label: '默认设置 (Default)',
+        icon: Sparkles,
+        colors: 32,      // layer_diff≈35, 适中合并
+        paths: 80,       // precision=6
+        corners: 55,     // threshold≈99°
+        noise: 20,
+        blur: 0,
+        sampling: 2,
+        colorMode: 'color',
+        autoAntiAlias: true
+    },
+    'clipart': {
+        label: '剪贴画/图标 (Clipart)',
+        icon: Palette,
+        colors: 20,      // layer_diff≈46, 合并成色块
+        paths: 75,       // precision=6
+        corners: 65,     // threshold≈117°, 保留尖角
+        noise: 20,
+        blur: 0,
+        sampling: 2,
+        colorMode: 'color',
+        autoAntiAlias: true
+    },
+    'photo': {
+        label: '复杂照片 (Photo)',
+        icon: ImageIcon,
+        colors: 64,      // layer_diff=4, 最小合并
+        paths: 85,       // precision=7
+        corners: 35,     // threshold≈63°, 圆滑渐变
+        noise: 25,
+        blur: 0,
+        sampling: 1,
+        colorMode: 'color',
+        autoAntiAlias: false
+    },
+    'sketch': {
+        label: '灰度素描 (Sketch)',
+        icon: Wand2,
+        colors: 6,       // layer_diff≈60, 简化为灰阶
+        paths: 65,       // precision=5
+        corners: 40,     // threshold≈72°
+        noise: 20,
+        blur: 0,
+        sampling: 2,
+        colorMode: 'grayscale',
+        autoAntiAlias: true
+    },
+    'lineart': {
+        label: '黑白线稿 (Line Art)',
+        icon: Contrast,
+        colors: 2,       // layer_diff=64, 纯黑白
+        paths: 90,       // precision=7, 精确
+        corners: 85,     // threshold≈153°, 保留尖角
+        noise: 25,
+        blur: 0,
+        sampling: 4,
+        colorMode: 'binary',
+        autoAntiAlias: true
+    },
+    'poster': {
+        label: '海报风格 (Poster)',
+        icon: Layers,
+        colors: 8,       // layer_diff≈58, 简化主色
+        paths: 70,       // precision=6
+        corners: 50,     // threshold=90°
+        noise: 20,
+        blur: 0,
+        sampling: 2,
+        colorMode: 'color',
+        autoAntiAlias: true
+    },
 };
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -54,11 +127,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setIsPickingColor,
     onAiSplit,
     aiProcessing,
+    detectedImageType,
     onUndo,
     onRedo,
     canUndo,
     canRedo,
-    palette
+    palette,
+    originalPalette
 }) => {
     const [selectedPreset, setSelectedPreset] = useState<PresetName>('default');
     const [showAdvanced, setShowAdvanced] = useState(false);
@@ -111,26 +186,45 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
     );
 
-    const renderPalette = () => {
-        if (!palette || palette.length === 0) return null;
+    // Updated Prop Interface
+    interface SidebarProps {
+        params: TracerParams;
+        setParams: (p: TracerParams) => void;
+        onUploadClick: () => void;
+        onDownloadSvg: () => void;
+        onDownloadPng: () => void;
+        processing: boolean;
+        hasImage: boolean;
+        isPickingColor: boolean;
+        setIsPickingColor: (v: boolean) => void;
+        onAiSplit: () => void;
+        aiProcessing: boolean;
+        onUndo: () => void;
+        onRedo: () => void;
+        canUndo: boolean;
+        canRedo: boolean;
+        palette: PaletteItem[];
+        originalPalette?: PaletteItem[]; // New Prop
+        apiKey: string;
+        setApiKey: (k: string) => void;
+    }
 
-        // Sort logic already handled in mockVTracer, but ensure consistency
-        // We display up to 32 colors visually to avoid clutter, though calculation might have more
-        const displayPalette = palette.slice(0, 48);
+    // ... (Inside Component)
+
+    const renderPaletteSection = (pal: PaletteItem[] | undefined, title: string, showWarning = false) => {
+        if (!pal || pal.length === 0) return null;
+
+        const displayPalette = pal.slice(0, 48);
 
         return (
             <div className="mt-4 bg-slate-900/40 rounded-lg p-3 border border-slate-800">
                 <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">检测到的色板 (Palette)</span>
-                    <span className="text-[10px] text-slate-600 font-mono">{palette.length} Colors</span>
+                    <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">{title}</span>
+                    <span className="text-[10px] text-slate-600 font-mono">{pal.length} Colors</span>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                     {displayPalette.map((p, idx) => {
-                        // Calculate size based on ratio (dominance)
-                        // Base size 12px, max additional 12px
-                        // Use log scale so small percentages are still visible
                         const size = Math.max(12, Math.min(24, 12 + (Math.log10(p.ratio * 100 + 1) * 8)));
-
                         return (
                             <div
                                 key={`${p.hex}-${idx}`}
@@ -141,7 +235,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     height: `${size}px`
                                 }}
                             >
-                                {/* Tooltip */}
                                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-black/90 text-white text-[10px] rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 font-mono border border-white/10">
                                     {p.hex.toUpperCase()} <br />
                                     {(p.ratio * 100).toFixed(1)}%
@@ -150,7 +243,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         );
                     })}
                 </div>
-                {params.colors > 48 && (
+                {showWarning && params.colors > 48 && (
                     <div className="mt-2 text-[9px] text-center text-slate-600 italic">
                         ...及更多微小色块 (噪音)
                     </div>
@@ -206,12 +299,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {/* Smart Auto Tune Button */}
                 <button
                     onClick={onAiSplit}
-                    className="w-full py-2.5 bg-gradient-to-r from-emerald-600/20 to-teal-600/20 hover:from-emerald-600/30 hover:to-teal-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl flex items-center justify-center gap-2 text-xs font-semibold transition-all group relative overflow-hidden active:scale-[0.98]"
+                    disabled={aiProcessing}
+                    className="w-full py-2.5 bg-gradient-to-r from-emerald-600/20 to-teal-600/20 hover:from-emerald-600/30 hover:to-teal-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl flex items-center justify-center gap-2 text-xs font-semibold transition-all group relative overflow-hidden active:scale-[0.98] disabled:opacity-50"
                 >
-                    <Wand className="w-4 h-4 group-hover:rotate-12 transition-transform" />
-                    <span> 推荐设置 (Recommended)</span>
+                    <Wand className={`w-4 h-4 transition-transform ${aiProcessing ? 'animate-spin' : 'group-hover:rotate-12'}`} />
+                    <span>{aiProcessing ? '分析中...' : '推荐设置 (Recommended)'}</span>
                     <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                 </button>
+
+                {/* Detection Result Banner */}
+                {detectedImageType && (
+                    <div className="bg-gradient-to-r from-emerald-900/30 to-teal-900/30 border border-emerald-500/20 rounded-lg px-3 py-2 text-center animate-pulse">
+                        <span className="text-xs text-emerald-300">
+                            ✓ 检测到: <strong>{detectedImageType}</strong>
+                        </span>
+                    </div>
+                )}
             </div>
 
             {/* Scrollable Settings */}
@@ -225,7 +328,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         min={2} max={64} step={1}
                         onValueChange={(v) => updateParam('colors', v)}
                     />
-                    {renderPalette()}
+                    <p className="text-[10px] text-slate-500 -mt-2 mb-2 px-1">
+                        * 控制矢量图使用的颜色数量。越少=越简洁，越多=越精细
+                    </p>
+                    <div className="flex items-center justify-between gap-3 rounded-lg bg-slate-900/50 p-2 border border-slate-800">
+                        <div className="flex-1">
+                            <div className="text-[11px] text-slate-200">色板映射 (Palette Lock)</div>
+                            <div className="text-[10px] text-slate-500">
+                                将颜色固定到原图色板，可能更稳定但饱和度会降低
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            aria-pressed={params.usePaletteMapping === true}
+                            onClick={() => updateParam('usePaletteMapping', !params.usePaletteMapping)}
+                            className={`inline-flex h-5 w-9 items-center rounded-full border transition-colors ${params.usePaletteMapping ? 'bg-emerald-500/70 border-emerald-400/40' : 'bg-slate-700 border-slate-600'}`}
+                        >
+                            <span
+                                className={`ml-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${params.usePaletteMapping ? 'translate-x-4' : 'translate-x-0'}`}
+                            />
+                        </button>
+                    </div>
+                    {/* Original Source Palette */}
+                    {renderPaletteSection(originalPalette, "原图色板 (Source)")}
+                    {/* Vector Output Palette */}
+                    {renderPaletteSection(palette, "检测到的色板 (Vector)", true)}
                 </div>
 
                 {/* Sampling (Upscale) Group */}
@@ -273,18 +400,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <span className="text-xs font-bold text-slate-300 tracking-wider">细节处理 (DETAILS)</span>
                     </div>
 
-                    {/* Blur Filter (New) */}
-                    <Slider
-                        label="预模糊 (Pre-Blur)"
-                        value={params.blur}
-                        min={0} max={4} step={1}
-                        onValueChange={(v) => updateParam('blur', v)}
-                        className="py-1"
-                        formatValue={(v) => v === 0 ? 'Off' : `${v}px`}
-                    />
-                    <p className="text-[10px] text-slate-500 -mt-2 mb-2 px-1">
-                        * 增加模糊可减少锯齿和噪点
-                    </p>
 
                     {/* Path Precision */}
                     <Slider
@@ -324,6 +439,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <p className="text-[10px] text-slate-500 -mt-2 mb-2 px-1">
                         * 越高过滤斑点力度越强，可去除细小杂色
                     </p>
+                    <div className="flex items-center justify-between gap-3 rounded-lg bg-slate-900/50 p-2 border border-slate-800">
+                        <div className="flex-1">
+                            <div className="text-[11px] text-slate-200">边缘平滑 (Anti-Alias)</div>
+                            <div className="text-[10px] text-slate-500">
+                                轻微预平滑以减少锯齿，可能略微牺牲锐度
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            aria-pressed={params.autoAntiAlias === true}
+                            onClick={() => updateParam('autoAntiAlias', !params.autoAntiAlias)}
+                            className={`inline-flex h-5 w-9 items-center rounded-full border transition-colors ${params.autoAntiAlias ? 'bg-sky-500/70 border-sky-400/40' : 'bg-slate-700 border-slate-600'}`}
+                        >
+                            <span
+                                className={`ml-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${params.autoAntiAlias ? 'translate-x-4' : 'translate-x-0'}`}
+                            />
+                        </button>
+                    </div>
                 </div>
             </div>
 

@@ -75,7 +75,7 @@ export const Canvas: React.FC<CanvasProps> = ({
 
     useEffect(() => {
         if (localPaths.length === 0) {
-            setContentCenterOffset({ x: 0, y: 0 });
+            setContentCenterOffset(prev => (prev.x === 0 && prev.y === 0) ? prev : { x: 0, y: 0 });
             return;
         }
 
@@ -97,9 +97,13 @@ export const Canvas: React.FC<CanvasProps> = ({
         if (minX !== Infinity) {
             const cx = (minX + maxX) / 2;
             const cy = (minY + maxY) / 2;
-            setContentCenterOffset({
-                x: (width / 2) - cx,
-                y: (height / 2) - cy
+            const newX = (width / 2) - cx;
+            const newY = (height / 2) - cy;
+
+            // Critical Optimization: Equality Check to prevent infinite loops
+            setContentCenterOffset(prev => {
+                if (Math.abs(prev.x - newX) < 0.1 && Math.abs(prev.y - newY) < 0.1) return prev;
+                return { x: newX, y: newY };
             });
         }
     }, [localPaths, width, height]);
@@ -157,7 +161,7 @@ export const Canvas: React.FC<CanvasProps> = ({
     }, [viewMode, width, height]);
 
     const handleResetPositions = () => {
-        const newPaths = localPaths.map(p => ({ ...p, x: 0, y: 0 }));
+        const newPaths = localPaths.map(p => ({ ...p, x: p.initialX ?? 0, y: p.initialY ?? 0 }));
         setLocalPaths(newPaths);
         onPathsChange(newPaths); // Update history
 
@@ -523,10 +527,7 @@ export const Canvas: React.FC<CanvasProps> = ({
         });
     };
 
-    useEffect(() => {
-        if (width > 0 && height > 0 && viewMode !== 'isometric') fitToScreen();
-    }, [width, height]);
-
+    // Redundant useEffect removed to prevent Loop
 
     if (!originalImage) {
         return (

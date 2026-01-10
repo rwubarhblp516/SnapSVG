@@ -16,7 +16,17 @@ pub fn init() {
 /// 初始化 WASM 线程池（需要启用 crossOriginIsolated）
 #[wasm_bindgen(js_name = initThreadPool)]
 pub async fn init_thread_pool(worker_count: usize) -> Result<(), JsValue> {
+    init_thread_pool_inner(worker_count).await
+}
+
+#[cfg(all(feature = "wasm-threads", target_feature = "atomics"))]
+async fn init_thread_pool_inner(worker_count: usize) -> Result<(), JsValue> {
     wasm_bindgen_rayon::init_thread_pool(worker_count).await
+}
+
+#[cfg(not(all(feature = "wasm-threads", target_feature = "atomics")))]
+async fn init_thread_pool_inner(_worker_count: usize) -> Result<(), JsValue> {
+    Err(JsValue::from_str("WASM 线程池未启用（需要 wasm-threads 特性与 atomics 支持）"))
 }
 
 /// 将图片字节数组转换为 SVG 字符串

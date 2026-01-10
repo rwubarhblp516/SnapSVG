@@ -1,4 +1,3 @@
-
 export interface TracerParams {
   colors: number; // 2-64
   paths: number; // 0-100 (High = tight fit, Low = loose)
@@ -12,6 +11,8 @@ export interface TracerParams {
   autoAntiAlias: boolean; // Morphological smoothing
   backgroundColor?: { r: number; g: number; b: number }; // Target background color
   useWasm?: boolean; // 使用 WASM 后端 (实验性)
+  palette?: string[]; // Optional target palette for strict quantization
+  usePaletteMapping?: boolean; // Force map to source palette (low fidelity when enabled)
 }
 
 export interface VectorPath {
@@ -22,6 +23,8 @@ export interface VectorPath {
   strokeWidth?: number;
   x: number;
   y: number;
+  initialX: number;
+  initialY: number;
   scale?: number; // Optional scaling for WASM upscaled paths
 }
 
