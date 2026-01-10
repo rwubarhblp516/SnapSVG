@@ -267,7 +267,8 @@ pub fn trace_rgba_parallel(
             batch_size: 25600,
             good_min_area: cfg.filter_speckle,
             good_max_area: w * h,
-            is_same_color_a: cfg.color_precision,
+            // 注意：is_same_color_a 必须小于 8
+            is_same_color_a: cfg.color_precision.min(7),
             is_same_color_b: 1,
             deepen_diff: cfg.layer_difference,
             hollow_neighbours: 1,
