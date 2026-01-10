@@ -1,11 +1,26 @@
 import { TracerParams, VectorPath, PaletteItem, TracerResult, ThreadStatus } from '../types';
 import { workerPool, ProgressCallback } from './workerPool';
 import { taskScheduler, TaskPriority } from './taskScheduler';
+import { samplingPrecacher, SamplingLevel, SAMPLING_LEVELS, PrecacheProgressCallback } from './samplingPrecacher';
 
 // 导出调度器控制函数
 export const getSchedulerStatus = () => taskScheduler.getStatus();
 export const cancelAllTasks = () => taskScheduler.cancelAll();
 export const updateSchedulerOptions = taskScheduler.updateOptions.bind(taskScheduler);
+
+// 导出采样预缓存函数
+export const precacheSamplingLevels = (
+    imageData: ImageData,
+    blur?: number,
+    onProgress?: PrecacheProgressCallback
+) => samplingPrecacher.precache(imageData, blur, onProgress);
+export const getSampledImage = (imageData: ImageData, level: SamplingLevel) =>
+    samplingPrecacher.getCached(imageData, level);
+export const hasSampledImage = (imageData: ImageData, level: SamplingLevel) =>
+    samplingPrecacher.hasCached(imageData, level);
+export const getCachedSamplingLevels = (imageData: ImageData) =>
+    samplingPrecacher.getCachedLevels(imageData);
+export { SAMPLING_LEVELS, type SamplingLevel };
 
 /**
  * ADVANCED VECTOR TRACER (WORKER PROXY)
@@ -771,49 +786,72 @@ export const traceImage = async (originalImageData: ImageData, params: TracerPar
                     targetWidth = Math.floor(sourceWidth * scale);
                     targetHeight = Math.floor(sourceHeight * scale);
                 }
-                const canvas = document.createElement('canvas');
-                canvas.width = targetWidth;
-                canvas.height = targetHeight;
-                const ctx = canvas.getContext('2d');
-                if (!ctx) throw new Error('无法创建 Canvas');
 
-                ctx.imageSmoothingEnabled = scale > 1;
-                ctx.imageSmoothingQuality = 'high';
-                ctx.filter = effectiveBlur > 0 ? `blur(${effectiveBlur}px)` : 'none';
-
-                if (scale !== 1 || effectiveBlur > 0) {
-                    const tempCanvas = document.createElement('canvas');
-                    tempCanvas.width = sourceWidth;
-                    tempCanvas.height = sourceHeight;
-                    const tempCtx = tempCanvas.getContext('2d');
-                    if (!tempCtx) throw new Error('Temp Canvas Error');
-                    if (useCrop) {
-                        tempCtx.putImageData(originalImageData, -cropOffsetX, -cropOffsetY, cropOffsetX, cropOffsetY, sourceWidth, sourceHeight);
-                    } else {
-                        tempCtx.putImageData(originalImageData, 0, 0);
-                    }
-                    ctx.drawImage(tempCanvas, 0, 0, targetWidth, targetHeight);
-                } else {
-                    if (useCrop) {
-                        ctx.putImageData(originalImageData, -cropOffsetX, -cropOffsetY, cropOffsetX, cropOffsetY, sourceWidth, sourceHeight);
-                    } else {
-                        ctx.putImageData(originalImageData, 0, 0);
+                // 🚀 优先使用预缓存的放大图像（如果是标准采样级别且没有裁剪）
+                const isSamplingLevel = SAMPLING_LEVELS.includes(scale as SamplingLevel);
+                if (isSamplingLevel && !useCrop && effectiveBlur === 0) {
+                    const precachedImage = samplingPrecacher.getCached(originalImageData, scale as SamplingLevel);
+                    if (precachedImage) {
+                        console.log(`[Tracer] ⚡ 使用预缓存的 ${scale}x 放大图像`);
+                        baseImageData = precachedImage;
+                        // 获取背景色
+                        if (baseImageData.data.length > 0) {
+                            const r = baseImageData.data[0];
+                            const g = baseImageData.data[1];
+                            const b = baseImageData.data[2];
+                            bgColorHex = "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+                        }
+                        imageCache.set(cacheKey, { data: baseImageData, bgColorHex });
                     }
                 }
 
-                baseImageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
-                // 获取背景色
-                if (baseImageData.data.length > 0) {
-                    const r = baseImageData.data[0];
-                    const g = baseImageData.data[1];
-                    const b = baseImageData.data[2];
-                    bgColorHex = "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+                // 如果预缓存未命中，实时计算
+                if (!baseImageData) {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = targetWidth;
+                    canvas.height = targetHeight;
+                    const ctx = canvas.getContext('2d');
+                    if (!ctx) throw new Error('无法创建 Canvas');
+
+                    ctx.imageSmoothingEnabled = scale > 1;
+                    ctx.imageSmoothingQuality = 'high';
+                    ctx.filter = effectiveBlur > 0 ? `blur(${effectiveBlur}px)` : 'none';
+
+                    if (scale !== 1 || effectiveBlur > 0) {
+                        const tempCanvas = document.createElement('canvas');
+                        tempCanvas.width = sourceWidth;
+                        tempCanvas.height = sourceHeight;
+                        const tempCtx = tempCanvas.getContext('2d');
+                        if (!tempCtx) throw new Error('Temp Canvas Error');
+                        if (useCrop) {
+                            tempCtx.putImageData(originalImageData, -cropOffsetX, -cropOffsetY, cropOffsetX, cropOffsetY, sourceWidth, sourceHeight);
+                        } else {
+                            tempCtx.putImageData(originalImageData, 0, 0);
+                        }
+                        ctx.drawImage(tempCanvas, 0, 0, targetWidth, targetHeight);
+                    } else {
+                        if (useCrop) {
+                            ctx.putImageData(originalImageData, -cropOffsetX, -cropOffsetY, cropOffsetX, cropOffsetY, sourceWidth, sourceHeight);
+                        } else {
+                            ctx.putImageData(originalImageData, 0, 0);
+                        }
+                    }
+
+                    baseImageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+                    // 获取背景色
+                    if (baseImageData.data.length > 0) {
+                        const r = baseImageData.data[0];
+                        const g = baseImageData.data[1];
+                        const b = baseImageData.data[2];
+                        bgColorHex = "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+                    }
+                    if (useCrop) {
+                        bgColorHex = originalBgColorHex;
+                    }
+                    imageCache.set(cacheKey, { data: baseImageData, bgColorHex });
                 }
-                if (useCrop) {
-                    bgColorHex = originalBgColorHex;
-                }
-                imageCache.set(cacheKey, { data: baseImageData, bgColorHex });
             }
+
             if (!baseImageData) {
                 throw new Error('无法获取缩放后的图像数据');
             }

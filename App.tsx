@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Canvas } from './components/Canvas';
 import { TracerParams, VectorPath, ProcessingStats, PaletteItem, ThreadStatus } from './types';
-import { traceImage, extractPalette, autoDetectParams, getThreadStatus, onThreadStatusChange } from './services/mockVTracer';
+import { traceImageScheduled, extractPalette, autoDetectParams, getThreadStatus, onThreadStatusChange, precacheSamplingLevels } from './services/mockVTracer';
 // Removed aiService imports since we are now fully local
 
 // Type for History Step
@@ -196,6 +196,11 @@ const App: React.FC = () => {
                 const data = ctx.getImageData(0, 0, img.width, img.height);
                 setImageData(data);
 
+                // 🚀 触发后台并行预缓存 (1x, 2x, 4x)
+                precacheSamplingLevels(data, 0, (status) => {
+                    console.log(`[App] Precache progress: ${status.completed.length}/${status.completed.length + status.pending.length}`);
+                });
+
                 // Extract Palette and Color Estimate
                 const { colorCount, palette } = extractPalette(data.data, img.width * img.height);
                 const suggestedParams = autoDetectParams(data) as any;
@@ -307,7 +312,13 @@ const App: React.FC = () => {
 
         // This effect runs whenever `params` changes.
         // So when AI updates params, this runs automatically.
-        const timer = setTimeout(async () => {
+        // 使用 traceImageScheduled，它内部有 debounce 处理
+        // 我们不需要这里的 setTimeout，但原逻辑有 setProcessing 的控制，
+        // 调度器返回 promise，我们可以直接 await。
+
+        let cancelled = false;
+
+        const runTrace = async () => {
             setProcessing(true);
             const start = performance.now();
             try {
@@ -316,7 +327,10 @@ const App: React.FC = () => {
                     ? originalPalette.slice(0, params.colors).map(p => p.hex)
                     : undefined;
 
-                const result = await traceImage(imageData, { ...params, palette: targetPalette });
+                // 🚀 使用带调度的 traceImageScheduled
+                const result = await traceImageScheduled(imageData, { ...params, palette: targetPalette });
+
+                if (cancelled) return;
 
                 setSvgPaths(result.paths);
                 setPalette(result.palette);
@@ -327,12 +341,22 @@ const App: React.FC = () => {
                 // Auto-save history after successful generation
                 addToHistory(result.paths, params, result.palette);
             } catch (e) {
-                console.error("Vectorization failed", e);
+                if (!cancelled) {
+                    // 只有非取消的错误才 log
+                    // 调度器取消任务会抛出错误吗？通常是 reject 或返回 null/empty？
+                    // 我们假设调度器只是 resolve 最新的，或者 reject 取消的。
+                    console.error("Vectorization failed or cancelled", e);
+                }
             } finally {
-                setProcessing(false);
+                if (!cancelled) setProcessing(false);
             }
-        }, 400);
-        return () => clearTimeout(timer);
+        };
+
+        runTrace();
+
+        return () => {
+            cancelled = true;
+        };
     }, [params, imageData, addToHistory, originalPalette]);
 
     // --- Downloads ---
