@@ -12,11 +12,6 @@ export function get_version(): string;
 export function init(): void;
 
 /**
- * 初始化 WASM 线程池（需要启用 crossOriginIsolated）
- */
-export function initThreadPool(worker_count: number): Promise<void>;
-
-/**
  * 将图片字节数组转换为 SVG 字符串
  * 
  * # 参数
@@ -42,13 +37,9 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
   readonly memory: WebAssembly.Memory;
   readonly get_version: () => [number, number];
-  readonly initThreadPool: (a: number) => any;
   readonly trace_image_to_svg: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
   readonly trace_rgba_to_svg: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
   readonly init: () => void;
-  readonly wasm_bindgen__convert__closures_____invoke__h51485259dd6be5f7: (a: number, b: number, c: any) => void;
-  readonly wasm_bindgen__closure__destroy__h7d7a91a10cbcbf9a: (a: number, b: number) => void;
-  readonly wasm_bindgen__convert__closures_____invoke__hc7d4304f385fa561: (a: number, b: number, c: any, d: any) => void;
   readonly __wbindgen_exn_store: (a: number) => void;
   readonly __externref_table_alloc: () => number;
   readonly __wbindgen_externrefs: WebAssembly.Table;

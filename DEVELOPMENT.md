@@ -128,6 +128,7 @@ pub fn trace_image_to_svg(
     cd src-rust
     wasm-pack build --target web --out-dir ../public/wasm
     ```
+    若需要启用多线程（Rayon），请确保服务器启用 `Cross-Origin-Opener-Policy: same-origin` 与 `Cross-Origin-Embedder-Policy: require-corp`，并使用 nightly 工具链构建。
 
 2.  **前端调用 (React)**:
     你需要修改 `App.tsx` 或创建一个新的 `services/wasmTracer.ts`。

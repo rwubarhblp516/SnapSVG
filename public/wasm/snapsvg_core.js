@@ -6,10 +6,6 @@ function addToExternrefTable0(obj) {
     return idx;
 }
 
-const CLOSURE_DTORS = (typeof FinalizationRegistry === 'undefined')
-    ? { register: () => {}, unregister: () => {} }
-    : new FinalizationRegistry(state => state.dtor(state.a, state.b));
-
 let cachedDataViewMemory0 = null;
 function getDataViewMemory0() {
     if (cachedDataViewMemory0 === null || cachedDataViewMemory0.buffer.detached === true || (cachedDataViewMemory0.buffer.detached === undefined && cachedDataViewMemory0.buffer !== wasm.memory.buffer)) {
@@ -42,34 +38,6 @@ function handleError(f, args) {
 
 function isLikeNone(x) {
     return x === undefined || x === null;
-}
-
-function makeMutClosure(arg0, arg1, dtor, f) {
-    const state = { a: arg0, b: arg1, cnt: 1, dtor };
-    const real = (...args) => {
-
-        // First up with a closure we increment the internal reference
-        // count. This ensures that the Rust closure environment won't
-        // be deallocated while we're invoking it.
-        state.cnt++;
-        const a = state.a;
-        state.a = 0;
-        try {
-            return f(a, state.b, ...args);
-        } finally {
-            state.a = a;
-            real._wbg_cb_unref();
-        }
-    };
-    real._wbg_cb_unref = () => {
-        if (--state.cnt === 0) {
-            state.dtor(state.a, state.b);
-            state.a = 0;
-            CLOSURE_DTORS.unregister(state);
-        }
-    };
-    CLOSURE_DTORS.register(real, state, state);
-    return real;
 }
 
 function passArray8ToWasm0(arg, malloc) {
@@ -151,14 +119,6 @@ if (!('encodeInto' in cachedTextEncoder)) {
 
 let WASM_VECTOR_LEN = 0;
 
-function wasm_bindgen__convert__closures_____invoke__h51485259dd6be5f7(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h51485259dd6be5f7(arg0, arg1, arg2);
-}
-
-function wasm_bindgen__convert__closures_____invoke__hc7d4304f385fa561(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__hc7d4304f385fa561(arg0, arg1, arg2, arg3);
-}
-
 /**
  * 获取版本信息
  * @returns {string}
@@ -181,16 +141,6 @@ export function get_version() {
  */
 export function init() {
     wasm.init();
-}
-
-/**
- * 初始化 WASM 线程池（需要启用 crossOriginIsolated）
- * @param {number} worker_count
- * @returns {Promise<void>}
- */
-export function initThreadPool(worker_count) {
-    const ret = wasm.initThreadPool(worker_count);
-    return ret;
 }
 
 /**
@@ -307,10 +257,6 @@ async function __wbg_load(module, imports) {
 function __wbg_get_imports() {
     const imports = {};
     imports.wbg = {};
-    imports.wbg.__wbg___wbindgen_is_function_8d400b8b1af978cd = function(arg0) {
-        const ret = typeof(arg0) === 'function';
-        return ret;
-    };
     imports.wbg.__wbg___wbindgen_is_undefined_f6b95eab589e0269 = function(arg0) {
         const ret = arg0 === undefined;
         return ret;
@@ -318,13 +264,6 @@ function __wbg_get_imports() {
     imports.wbg.__wbg___wbindgen_throw_dd24417ed36fc46e = function(arg0, arg1) {
         throw new Error(getStringFromWasm0(arg0, arg1));
     };
-    imports.wbg.__wbg__wbg_cb_unref_87dfb5aaa0cbcea7 = function(arg0) {
-        arg0._wbg_cb_unref();
-    };
-    imports.wbg.__wbg_call_3020136f7a2d6e44 = function() { return handleError(function (arg0, arg1, arg2) {
-        const ret = arg0.call(arg1, arg2);
-        return ret;
-    }, arguments) };
     imports.wbg.__wbg_call_abb4ff46ce38be40 = function() { return handleError(function (arg0, arg1) {
         const ret = arg0.call(arg1);
         return ret;
@@ -340,41 +279,22 @@ function __wbg_get_imports() {
             wasm.__wbindgen_free(deferred0_0, deferred0_1, 1);
         }
     };
+    imports.wbg.__wbg_instanceof_Window_b5cf7783caa68180 = function(arg0) {
+        let result;
+        try {
+            result = arg0 instanceof Window;
+        } catch (_) {
+            result = false;
+        }
+        const ret = result;
+        return ret;
+    };
     imports.wbg.__wbg_new_8a6f238a6ece86ea = function() {
         const ret = new Error();
         return ret;
     };
-    imports.wbg.__wbg_new_ff12d2b041fb48f1 = function(arg0, arg1) {
-        try {
-            var state0 = {a: arg0, b: arg1};
-            var cb0 = (arg0, arg1) => {
-                const a = state0.a;
-                state0.a = 0;
-                try {
-                    return wasm_bindgen__convert__closures_____invoke__hc7d4304f385fa561(a, state0.b, arg0, arg1);
-                } finally {
-                    state0.a = a;
-                }
-            };
-            const ret = new Promise(cb0);
-            return ret;
-        } finally {
-            state0.a = state0.b = 0;
-        }
-    };
     imports.wbg.__wbg_new_no_args_cb138f77cf6151ee = function(arg0, arg1) {
         const ret = new Function(getStringFromWasm0(arg0, arg1));
-        return ret;
-    };
-    imports.wbg.__wbg_queueMicrotask_9b549dfce8865860 = function(arg0) {
-        const ret = arg0.queueMicrotask;
-        return ret;
-    };
-    imports.wbg.__wbg_queueMicrotask_fca69f5bfad613a5 = function(arg0) {
-        queueMicrotask(arg0);
-    };
-    imports.wbg.__wbg_resolve_fd5bfbaa4ce36e1e = function(arg0) {
-        const ret = Promise.resolve(arg0);
         return ret;
     };
     imports.wbg.__wbg_stack_0ed75d68575b0f3c = function(arg0, arg1) {
@@ -400,18 +320,9 @@ function __wbg_get_imports() {
         const ret = typeof window === 'undefined' ? null : window;
         return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
     };
-    imports.wbg.__wbg_then_4f95312d68691235 = function(arg0, arg1) {
-        const ret = arg0.then(arg1);
-        return ret;
-    };
     imports.wbg.__wbindgen_cast_2241b6af4c4b2941 = function(arg0, arg1) {
         // Cast intrinsic for `Ref(String) -> Externref`.
         const ret = getStringFromWasm0(arg0, arg1);
-        return ret;
-    };
-    imports.wbg.__wbindgen_cast_26bc8f9811a32ef5 = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 460, function: Function { arguments: [Externref], shim_idx: 461, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h7d7a91a10cbcbf9a, wasm_bindgen__convert__closures_____invoke__h51485259dd6be5f7);
         return ret;
     };
     imports.wbg.__wbindgen_init_externref_table = function() {
