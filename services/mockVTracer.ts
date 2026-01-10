@@ -1,10 +1,26 @@
 import { TracerParams, VectorPath, PaletteItem, TracerResult, ThreadStatus } from '../types';
+import { workerPool, ProgressCallback } from './workerPool';
 
 /**
  * ADVANCED VECTOR TRACER (WORKER PROXY)
  * Main Thread: Image Prep, Caching, Worker Communication
  * Worker Thread: WASM execution, SVG Parsing
+ * 
+ * 支持两种模式：
+ * 1. 单 Worker 模式 - 兼容性好，适合小图
+ * 2. 多 Worker 并行模式 - 高性能，适合大图 (>1MP)
  */
+
+// --- 并行处理配置 ---
+const PARALLEL_THRESHOLD = 1000000; // 超过 1MP 像素使用并行模式
+let _useParallelMode = true; // 默认开启并行模式
+
+export const setParallelMode = (enabled: boolean) => {
+    _useParallelMode = enabled;
+    console.log(`[Tracer] 并行模式: ${enabled ? '开启' : '关闭'}`);
+};
+
+export const getParallelMode = () => _useParallelMode;
 
 // --- Worker Initialization ---
 // @ts-ignore
@@ -20,6 +36,15 @@ const _workerImageInfo = new WeakMap<ImageData, WorkerImageInfo>();
 const _workerImageInit = new WeakMap<ImageData, WorkerImageInit>();
 let _threadStatus: ThreadStatus = { state: 'unknown' };
 const _threadStatusListeners = new Set<(status: ThreadStatus) => void>();
+
+// 并行进度回调
+let _parallelProgressCallback: ProgressCallback | null = null;
+export const onParallelProgress = (callback: ProgressCallback | null) => {
+    _parallelProgressCallback = callback;
+};
+
+// 获取 Worker 池状态
+export const getWorkerPoolStatus = () => workerPool.getStatus();
 
 const notifyThreadStatus = (status: ThreadStatus) => {
     _threadStatus = { ...status };
@@ -596,6 +621,70 @@ export const traceImage = async (originalImageData: ImageData, params: TracerPar
     const existingPromise = inFlight.get(traceKey);
     if (existingPromise) {
         return existingPromise;
+    }
+
+    // 检查是否应该使用并行模式
+    const shouldUseParallel = _useParallelMode && pixelCount >= PARALLEL_THRESHOLD && !useCrop;
+
+    if (shouldUseParallel) {
+        console.log(`[Tracer] 🚀 大图并行模式: ${originalImageData.width}x${originalImageData.height} (${(pixelCount / 1000000).toFixed(2)}M 像素)`);
+
+        const parallelPromise = (async () => {
+            try {
+                // 预处理图像数据
+                let processedImageData: ImageData = originalImageData;
+
+                if (scale !== 1 || effectiveBlur > 0) {
+                    // 需要缩放或模糊处理
+                    const targetWidth = Math.floor(sourceWidth * scale);
+                    const targetHeight = Math.floor(sourceHeight * scale);
+                    const canvas = document.createElement('canvas');
+                    canvas.width = targetWidth;
+                    canvas.height = targetHeight;
+                    const ctx = canvas.getContext('2d');
+                    if (!ctx) throw new Error('无法创建 Canvas');
+
+                    ctx.imageSmoothingEnabled = scale > 1;
+                    ctx.imageSmoothingQuality = 'high';
+                    ctx.filter = effectiveBlur > 0 ? `blur(${effectiveBlur}px)` : 'none';
+
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = sourceWidth;
+                    tempCanvas.height = sourceHeight;
+                    const tempCtx = tempCanvas.getContext('2d');
+                    if (!tempCtx) throw new Error('Temp Canvas Error');
+                    tempCtx.putImageData(originalImageData, 0, 0);
+                    ctx.drawImage(tempCanvas, 0, 0, targetWidth, targetHeight);
+
+                    processedImageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+                }
+
+                const result = await workerPool.traceParallel(
+                    processedImageData,
+                    params,
+                    originalBgColorHex,
+                    scale,
+                    _parallelProgressCallback || undefined
+                );
+
+                return result;
+            } catch (error) {
+                console.warn('[Tracer] 并行模式失败，回退单 Worker 模式', error);
+                // 回退到单 Worker 模式
+                setParallelMode(false);
+                return traceImage(originalImageData, params);
+            }
+        })();
+
+        inFlight.set(traceKey, parallelPromise);
+        try {
+            const result = await parallelPromise;
+            resultCache.set(traceKey, { result, cachedAt: Date.now() });
+            enforceTraceCacheLimit(resultCache);
+            return result;
+        } finally {
+            inFlight.delete(traceKey);
+        }
     }
 
     const tracePromise: Promise<TracerResult> = (async () => {
