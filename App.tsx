@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Canvas } from './components/Canvas';
 import { TracerParams, VectorPath, ProcessingStats, PaletteItem, ThreadStatus } from './types';
-import { traceImageScheduled, extractPalette, autoDetectParams, getThreadStatus, onThreadStatusChange, precacheSamplingLevels } from './services/mockVTracer';
+import { traceImageScheduled, extractPalette, autoDetectParams, getThreadStatus, onThreadStatusChange, precacheSamplingLevels, clearTraceCache } from './services/mockVTracer';
 // Removed aiService imports since we are now fully local
 
 // Type for History Step
@@ -36,6 +36,9 @@ const App: React.FC = () => {
     const [imageDims, setImageDims] = useState({ width: 0, height: 0 });
     const [imageData, setImageData] = useState<ImageData | null>(null);
     const [imageFile, setImageFile] = useState<File | null>(null);
+
+    // 强制刷新计数器，用于“重新生成”功能
+    const [refreshCounter, setRefreshCounter] = useState(0);
 
     const [svgPaths, setSvgPaths] = useState<VectorPath[]>([]);
     // NEW: Palette State
@@ -307,15 +310,18 @@ const App: React.FC = () => {
         }, 600);
     };
 
+    const handleRegenerate = useCallback(() => {
+        if (!imageData) return;
+        clearTraceCache(imageData);
+        setRefreshCounter(prev => prev + 1);
+    }, [imageData]);
+
     // --- Vectorization Effect (Local) ---
     useEffect(() => {
         if (!imageData || isUndoRedoAction.current) return;
 
-        // This effect runs whenever `params` changes.
+        // This effect runs whenever `params` changes OR refreshCounter increments.
         // So when AI updates params, this runs automatically.
-        // 使用 traceImageScheduled，它内部有 debounce 处理
-        // 我们不需要这里的 setTimeout，但原逻辑有 setProcessing 的控制，
-        // 调度器返回 promise，我们可以直接 await。
 
         let cancelled = false;
 
@@ -358,7 +364,7 @@ const App: React.FC = () => {
         return () => {
             cancelled = true;
         };
-    }, [params, imageData, addToHistory, originalPalette]);
+    }, [params, imageData, addToHistory, originalPalette, refreshCounter]);
 
     // --- Downloads ---
     const downloadSvg = () => {
@@ -403,11 +409,7 @@ ${pathsString}
             ctx.lineWidth = (p.strokeWidth || 0.25) / s; // Adjust line width to counteract scaling if needed, or keep it consistent?
             // Note: strokeWidth in p is usually pre-calculated or generic. 
             // In mockVTracer TS, strokeWidth was 0.25. 
-            // In WASM, we set strokeWidth: 0.25 * scale, and p.scale is 1/scale. 
-            // So strokeWidth is physically larger. If we scale context down, distinct stroke width shrinks.
-            // Let's rely on what Canvas rendering does.
-            // If we scale the context by 0.5 (WASM 2x), a 1px line becomes 0.5px.
-            // WASM sets strokeWidth to 0.5 for 2x scale? No, WASM code: `strokeWidth: 0.25 * scale` (where scale=2). So it's 0.5.
+            // In WASM, we set strokeWidth: 0.25 * scale` (where scale=2). So it's 0.5.
             // Then we render with ctx.scale(0.5). Effective width = 0.5 * 0.5 = 0.25. Correct.
             // But wait, line width is affected by scale.
             ctx.lineWidth = p.strokeWidth || 0.25;
@@ -461,6 +463,8 @@ ${pathsString}
                 // API Key (Hidden now)
                 apiKey={apiKey}
                 setApiKey={setApiKey}
+                // NEW: Regenerate
+                onRegenerate={handleRegenerate}
             />
 
             <Canvas

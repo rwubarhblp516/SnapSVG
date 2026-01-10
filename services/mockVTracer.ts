@@ -59,6 +59,9 @@ const _workerImageInit = new WeakMap<ImageData, WorkerImageInit>();
 let _threadStatus: ThreadStatus = { state: 'unknown' };
 const _threadStatusListeners = new Set<(status: ThreadStatus) => void>();
 
+
+
+
 // 并行进度回调
 let _parallelProgressCallback: ProgressCallback | null = null;
 export const onParallelProgress = (callback: ProgressCallback | null) => {
@@ -959,4 +962,17 @@ export const traceImageImmediate = (
         () => traceImage(originalImageData, params),
         'high'
     );
+};
+
+// --- Manual Cache Control ---
+
+export const clearTraceCache = (imageData: ImageData) => {
+    if (_traceResultCache.has(imageData)) {
+        _traceResultCache.delete(imageData);
+        console.log('[Tracer] 结果缓存已清除');
+    }
+    if (_scaledImageCache.has(imageData)) {
+        _scaledImageCache.delete(imageData);
+        console.log('[Tracer] 缩放图像缓存已清除');
+    }
 };

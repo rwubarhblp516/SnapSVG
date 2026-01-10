@@ -4,7 +4,7 @@ import {
     Palette, Sparkles, Wand2,
     ChevronDown, ChevronUp, Check, Layers,
     FileImage, Eraser, Microscope, Contrast, Aperture, Pipette, X,
-    Bot, Undo2, Redo2, Wand, Info
+    Bot, Undo2, Redo2, Wand, Info, RefreshCw
 } from 'lucide-react';
 import { Slider } from './Slider';
 import { TracerParams, PresetName, PaletteItem, ThreadStatus } from '../types';
@@ -34,6 +34,7 @@ interface SidebarProps {
     // API Key Props (已废弃，保留接口兼容但隐藏)
     apiKey: string;
     setApiKey: (key: string) => void;
+    onRegenerate?: () => void;
 }
 
 const PRESETS: Record<PresetName, Partial<TracerParams> & { label: string, icon: any }> = {
@@ -136,7 +137,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     canUndo,
     canRedo,
     palette,
-    originalPalette
+    originalPalette,
+    onRegenerate
 }) => {
     const [selectedPreset, setSelectedPreset] = useState<PresetName>('default');
     const [showAdvanced, setShowAdvanced] = useState(false);
@@ -520,6 +522,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 />
                             </button>
                         </div>
+                        <button
+                            onClick={onRegenerate}
+                            disabled={processing}
+                            className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 text-xs flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                            title="清除缓存并强制重新生成"
+                        >
+                            <RefreshCw className={`w-3.5 h-3.5 ${processing ? 'animate-spin' : ''}`} />
+                            重新生成 (Regenerate)
+                        </button>
                     </div>
                 </div>
 
