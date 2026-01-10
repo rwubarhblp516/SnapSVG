@@ -13,7 +13,8 @@ import { workerPool, ProgressCallback } from './workerPool';
 
 // --- 并行处理配置 ---
 const PARALLEL_THRESHOLD = 1000000; // 超过 1MP 像素使用并行模式
-let _useParallelMode = true; // 默认开启并行模式
+// 注意：并行模式需要进一步调试分块合成逻辑，暂时默认关闭
+let _useParallelMode = false; // 🚧 暂时默认关闭，分块合成有问题
 
 export const setParallelMode = (enabled: boolean) => {
     _useParallelMode = enabled;
